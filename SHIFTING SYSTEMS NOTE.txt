@@ -1,0 +1,14 @@
+SHIFTING SYSTEMS NOTE::
+Delete old venv From:                  C:\project_recon\backend
+Delete the folder:                     venv
+
+Make sure Python is installed Check:   python --version
+
+Create New Virtual Environment Inside: C:\project_recon\backend
+Run:                                   python -m venv venv
+
+Activate It:                           venv\Scripts\activate
+
+Reinstall Dependencies:                pip install -r requirements.txt
+
+Run App:                               python app.py

@@ -1,0 +1,1979 @@
+# SF Recon Engine - Frontend-Backend Integration Guide
+
+## Document Overview
+This document provides comprehensive technical guidance for backend developers to understand and integrate with the SF Recon Engine frontend application. It details all API requirements, data structures, authentication mechanisms, and integration patterns needed to connect the frontend UI to backend services.
+
+**Target Audience:** Backend Developers, DevOps Engineers, Integration Specialists  
+**Last Updated:** March 11, 2026  
+**Frontend Version:** 0.0.1  
+**Document Version:** 1.0
+
+---
+
+## Table of Contents
+1. [Project Overview](#1-project-overview)
+2. [Frontend Technology Requirements](#2-frontend-technology-requirements)
+3. [Environment Setup](#3-environment-setup)
+4. [API Integration Requirements](#4-api-integration-requirements)
+5. [Authentication Requirements](#5-authentication-requirements)
+6. [Data Flow](#6-data-flow)
+7. [Error Handling](#7-error-handling)
+8. [Folder Structure Expectations](#8-folder-structure-expectations)
+9. [Deployment Requirements](#9-deployment-requirements)
+10. [WebSocket Integration](#10-websocket-integration)
+11. [Testing API Integration](#11-testing-api-integration)
+
+---
+
+## 1. Project Overview
+
+### 1.1 Application Purpose
+SF Recon Engine is a security reconnaissance dashboard application designed for security professionals to monitor, manage, and analyze security assets, vulnerabilities, and scan operations. The application provides:
+
+- **Real-time monitoring** of security posture through metrics and dashboards
+- **Asset inventory management** with comprehensive filtering and search capabilities
+- **Scan configuration and execution** for security reconnaissance operations
+- **Finding and vulnerability tracking** across all discovered assets
+
+### 1.2 Frontend Role
+The frontend serves as the **presentation and interaction layer** that:
+- Displays real-time security metrics and trends
+- Provides interactive interfaces for asset management
+- Enables scan configuration and monitoring
+- Visualizes security data through charts and tables
+- Manages user interactions and state
+
+### 1.3 Architecture Pattern
+The frontend follows a **client-side rendered SPA (Single Page Application)** architecture using:
+- React Router for declarative routing
+- Component-based architecture for modularity
+- RESTful API consumption for data operations
+- WebSocket connections for real-time updates (future implementation)
+
+---
+
+## 2. Frontend Technology Requirements
+
+### 2.1 Core Technologies
+```json
+{
+  "framework": "React 18.3.1",
+  "router": "React Router 7.13.0",
+  "styling": "Tailwind CSS 4.1.12",
+  "buildTool": "Vite 6.3.5",
+  "nodeVersion": ">=18.0.0",
+  "packageManager": "pnpm (recommended) or npm"
+}
+```
+
+### 2.2 Key Dependencies
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `recharts` | 2.15.2 | Data visualization (charts) |
+| `lucide-react` | 0.487.0 | Icon library |
+| `@mui/material` | 7.3.5 | UI component library |
+| `motion` | 12.23.24 | Animation library |
+| `sonner` | 2.0.3 | Toast notifications |
+| `react-hook-form` | 7.55.0 | Form management (future use) |
+
+### 2.3 HTTP Client Recommendation
+**Recommended:** `axios` or native `fetch` API
+
+The frontend does NOT currently include an HTTP client library. Backend integration will require:
+```bash
+pnpm add axios
+# or
+pnpm add @tanstack/react-query axios
+```
+
+### 2.4 Browser Support
+- Chrome/Edge (latest 2 versions)
+- Firefox (latest 2 versions)
+- Safari (latest 2 versions)
+- Mobile browsers (iOS Safari, Chrome Mobile)
+
+---
+
+## 3. Environment Setup
+
+### 3.1 Local Development Installation
+
+#### Step 1: Clone and Install
+```bash
+# Clone the repository
+git clone <repository-url>
+cd sf-recon-engine
+
+# Install dependencies
+pnpm install
+# or
+npm install
+```
+
+#### Step 2: Configure Environment Variables
+Create a `.env` file in the project root:
+
+```env
+# API Configuration
+VITE_API_BASE_URL=http://localhost:8000/api
+VITE_API_TIMEOUT=30000
+
+# WebSocket Configuration
+VITE_WS_URL=ws://localhost:8000/ws
+
+# Authentication
+VITE_AUTH_TOKEN_KEY=sf_recon_auth_token
+VITE_REFRESH_TOKEN_KEY=sf_recon_refresh_token
+
+# Feature Flags
+VITE_ENABLE_WEBSOCKET=true
+VITE_ENABLE_REAL_TIME_UPDATES=true
+
+# Environment
+VITE_ENV=development
+```
+
+**Important Notes:**
+- All Vite environment variables MUST be prefixed with `VITE_`
+- Variables are exposed to the client-side code
+- **Never commit `.env` files with production credentials**
+
+#### Step 3: Start Development Server
+```bash
+pnpm build
+# Development server typically runs on http://localhost:5173
+```
+
+### 3.2 Environment Variable Usage
+Access environment variables in React components:
+
+```typescript
+// src/config/api.ts
+export const API_CONFIG = {
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api',
+  timeout: parseInt(import.meta.env.VITE_API_TIMEOUT) || 30000,
+  wsURL: import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws',
+};
+```
+
+### 3.3 CORS Configuration
+The backend MUST configure CORS to allow requests from the frontend origin:
+
+```javascript
+// Example Express.js CORS config
+const cors = require('cors');
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+}));
+```
+
+---
+
+## 4. API Integration Requirements
+
+This section details the **exact API endpoints, methods, parameters, and response formats** required for each page/feature in the frontend.
+
+### 4.1 Dashboard Page (`/`)
+
+#### 4.1.1 Get Dashboard Metrics
+**Component:** `ReconDashboard.tsx`  
+**Trigger:** Page load, Auto-refresh every 30 seconds  
+**Endpoint:** `GET /api/dashboard/metrics`  
+**Authentication:** Required
+
+**Request:**
+```http
+GET /api/dashboard/metrics HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+```
+
+**Expected Response:**
+```json
+{
+  "totalAssets": {
+    "value": 1247,
+    "change": {
+      "percentage": 12,
+      "direction": "increase",
+      "timeframe": "last month"
+    }
+  },
+  "criticalFindings": {
+    "value": 23,
+    "change": {
+      "percentage": -8,
+      "direction": "decrease",
+      "timeframe": "last week"
+    }
+  },
+  "riskScore": {
+    "value": 7.2,
+    "maxValue": 10,
+    "change": {
+      "value": 0.3,
+      "direction": "increase",
+      "timeframe": "last scan"
+    }
+  },
+  "lastScan": {
+    "timestamp": "2026-03-11T10:30:00.000Z",
+    "relativeTime": "2 hours ago",
+    "nextScan": {
+      "timestamp": "2026-03-11T16:30:00.000Z",
+      "relativeTime": "In 4 hours"
+    }
+  }
+}
+```
+
+**Frontend Implementation:**
+```typescript
+// Expected usage in ReconDashboard.tsx
+useEffect(() => {
+  const fetchMetrics = async () => {
+    const response = await fetch(`${API_BASE_URL}/dashboard/metrics`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const data = await response.json();
+    setMetrics(data);
+  };
+  fetchMetrics();
+}, []);
+```
+
+#### 4.1.2 Get Risk Score Trend
+**Trigger:** Page load  
+**Endpoint:** `GET /api/dashboard/risk-trend`  
+**Authentication:** Required
+
+**Request:**
+```http
+GET /api/dashboard/risk-trend?timeframe=30d&granularity=daily HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+```
+
+**Query Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `timeframe` | string | No | "30d" | "7d", "30d", "90d", "1y" |
+| `granularity` | string | No | "daily" | "daily", "weekly", "monthly" |
+
+**Expected Response:**
+```json
+{
+  "data": [
+    { "date": "2026-01-01T00:00:00.000Z", "dateLabel": "Jan 1", "score": 6.8 },
+    { "date": "2026-01-05T00:00:00.000Z", "dateLabel": "Jan 5", "score": 7.0 },
+    { "date": "2026-01-10T00:00:00.000Z", "dateLabel": "Jan 10", "score": 7.2 },
+    { "date": "2026-01-15T00:00:00.000Z", "dateLabel": "Jan 15", "score": 7.1 },
+    { "date": "2026-01-20T00:00:00.000Z", "dateLabel": "Jan 20", "score": 7.3 },
+    { "date": "2026-01-25T00:00:00.000Z", "dateLabel": "Jan 25", "score": 7.5 },
+    { "date": "2026-01-30T00:00:00.000Z", "dateLabel": "Jan 30", "score": 7.2 }
+  ],
+  "timeframe": "30d",
+  "granularity": "daily"
+}
+```
+
+**Data Requirements:**
+- Minimum 7 data points for chart rendering
+- `dateLabel` should be human-readable (e.g., "Jan 1", "Week 12")
+- `score` should be a float between 0-10
+
+#### 4.1.3 Get Findings Distribution
+**Trigger:** Page load  
+**Endpoint:** `GET /api/dashboard/findings-distribution`  
+**Authentication:** Required
+
+**Request:**
+```http
+GET /api/dashboard/findings-distribution HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+```
+
+**Expected Response:**
+```json
+{
+  "distribution": [
+    { "name": "Critical", "value": 23, "fill": "#ef4444" },
+    { "name": "High", "value": 47, "fill": "#f97316" },
+    { "name": "Medium", "value": 89, "fill": "#eab308" },
+    { "name": "Low", "value": 156, "fill": "#22c55e" }
+  ],
+  "total": 315
+}
+```
+
+**Color Specifications:**
+| Severity | Color Code | Color Name |
+|----------|-----------|------------|
+| Critical | `#ef4444` | Red-500 |
+| High | `#f97316` | Orange-500 |
+| Medium | `#eab308` | Yellow-500 |
+| Low | `#22c55e` | Green-500 |
+
+#### 4.1.4 Get Recent Scans
+**Trigger:** Page load  
+**Endpoint:** `GET /api/scans/recent`  
+**Authentication:** Required
+
+**Request:**
+```http
+GET /api/scans/recent?limit=10&offset=0 HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+```
+
+**Query Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `limit` | integer | No | 10 | Max results (1-50) |
+| `offset` | integer | No | 0 | Pagination offset |
+
+**Expected Response:**
+```json
+{
+  "scans": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "target": "acme-corp.com",
+      "type": "full_scan",
+      "typeLabel": "Full Scan",
+      "status": "completed",
+      "findings": 23,
+      "startedAt": "2026-03-11T08:30:00.000Z",
+      "completedAt": "2026-03-11T10:30:00.000Z",
+      "duration": 7200,
+      "relativeTime": "2 hours ago"
+    },
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440001",
+      "target": "203.0.113.0/24",
+      "type": "network_scan",
+      "typeLabel": "Network Scan",
+      "status": "completed",
+      "findings": 15,
+      "startedAt": "2026-03-11T05:30:00.000Z",
+      "completedAt": "2026-03-11T07:30:00.000Z",
+      "duration": 7200,
+      "relativeTime": "5 hours ago"
+    }
+  ],
+  "total": 100,
+  "limit": 10,
+  "offset": 0
+}
+```
+
+**Status Values:**
+- `completed` - Green badge
+- `in_progress` - Blue badge
+- `failed` - Red badge
+- `pending` - Gray badge
+- `cancelled` - Gray badge
+
+**Type Values:**
+- `full_scan` → "Full Scan" (Blue badge)
+- `quick_scan` → "Quick Scan" (Gray badge)
+- `network_scan` → "Network Scan" (Purple badge)
+- `subdomain_scan` → "Subdomain Scan" (Purple badge)
+- `custom_scan` → "Custom Scan" (Purple badge)
+
+---
+
+### 4.2 Asset Inventory Page (`/inventory`)
+
+#### 4.2.1 Get Assets List
+**Component:** `AssetInventory.tsx`  
+**Trigger:** Page load, Filter change, Search  
+**Endpoint:** `GET /api/assets`  
+**Authentication:** Required
+
+**Request:**
+```http
+GET /api/assets?page=1&limit=10&filter=all&search=&sortBy=asset&sortOrder=asc HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+```
+
+**Query Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `page` | integer | No | 1 | Page number (1-indexed) |
+| `limit` | integer | No | 10 | Results per page (1-100) |
+| `filter` | string | No | "all" | "all", "domains", "ips", "cloud", "webapps" |
+| `search` | string | No | "" | Search query |
+| `riskLevel` | string | No | - | "critical", "high", "medium", "low" (multiple allowed) |
+| `status` | string | No | - | "active", "inactive" |
+| `sortBy` | string | No | "asset" | "asset", "risk", "findings", "lastScan" |
+| `sortOrder` | string | No | "asc" | "asc", "desc" |
+
+**Expected Response:**
+```json
+{
+  "assets": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "asset": "acme-corp.com",
+      "type": "domain",
+      "typeLabel": "Domain",
+      "riskLevel": "high",
+      "findings": 23,
+      "lastScan": {
+        "timestamp": "2026-03-11T10:30:00.000Z",
+        "relativeTime": "2 hours ago",
+        "scanId": "550e8400-e29b-41d4-a716-446655440100"
+      },
+      "status": "active",
+      "metadata": {
+        "ipAddress": "203.0.113.45",
+        "cloudProvider": null,
+        "region": null,
+        "tags": ["production", "external"]
+      },
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-03-11T10:30:00.000Z"
+    }
+  ],
+  "pagination": {
+    "total": 1247,
+    "page": 1,
+    "limit": 10,
+    "totalPages": 125,
+    "hasNext": true,
+    "hasPrev": false
+  },
+  "filters": {
+    "applied": {
+      "filter": "all",
+      "search": "",
+      "riskLevel": [],
+      "status": null
+    }
+  }
+}
+```
+
+**Type Mapping:**
+| Backend Value | Frontend Display | Icon | Badge Color |
+|---------------|-----------------|------|-------------|
+| `domain` | "Domain" | Globe | Blue |
+| `ip_address` | "IP Address" | Network | Purple |
+| `cloud_resource` | "Cloud" | Cloud | Green |
+| `web_app` | "Web App" | Globe | Blue |
+
+**Risk Level Mapping:**
+| Value | Display | Text Color | Dot Color |
+|-------|---------|-----------|-----------|
+| `critical` | "Critical" | Red-600 | Red-500 |
+| `high` | "High" | Orange-600 | Orange-500 |
+| `medium` | "Medium" | Yellow-600 | Yellow-500 |
+| `low` | "Low" | Green-600 | Green-500 |
+
+#### 4.2.2 Get Asset Stats
+**Trigger:** Page load  
+**Endpoint:** `GET /api/assets/stats`  
+**Authentication:** Required
+
+**Request:**
+```http
+GET /api/assets/stats HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+```
+
+**Expected Response:**
+```json
+{
+  "total": 1247,
+  "active": 1203,
+  "inactive": 44,
+  "atRisk": 23,
+  "byType": {
+    "domains": 523,
+    "ipAddresses": 312,
+    "cloudResources": 189,
+    "webApps": 223
+  },
+  "byRisk": {
+    "critical": 23,
+    "high": 89,
+    "medium": 234,
+    "low": 901
+  }
+}
+```
+
+**Usage in Frontend:**
+- Total Assets → stats.total
+- Active → stats.active
+- Inactive → stats.inactive
+- At Risk → stats.atRisk
+- Filter counts → stats.byType
+
+#### 4.2.3 Trigger Asset Scan
+**Trigger:** User clicks "Play" button on asset row  
+**Endpoint:** `POST /api/assets/{assetId}/scan`  
+**Authentication:** Required
+
+**Request:**
+```http
+POST /api/assets/550e8400-e29b-41d4-a716-446655440000/scan HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "scanType": "quick_scan",
+  "priority": "normal",
+  "options": {
+    "portScanning": true,
+    "sslAnalysis": true,
+    "vulnerabilityAssessment": false
+  }
+}
+```
+
+**Request Body:**
+```typescript
+interface TriggerScanRequest {
+  scanType: "full_scan" | "quick_scan";
+  priority: "low" | "normal" | "high";
+  options: {
+    portScanning?: boolean;
+    sslAnalysis?: boolean;
+    vulnerabilityAssessment?: boolean;
+  };
+}
+```
+
+**Expected Response (Success):**
+```json
+{
+  "scanId": "550e8400-e29b-41d4-a716-446655440200",
+  "status": "queued",
+  "estimatedDuration": 1800,
+  "queuePosition": 3,
+  "message": "Scan queued successfully"
+}
+```
+
+**Expected Response (Error - 409 Conflict):**
+```json
+{
+  "error": {
+    "code": "SCAN_IN_PROGRESS",
+    "message": "A scan is already running for this asset",
+    "details": {
+      "scanId": "550e8400-e29b-41d4-a716-446655440100",
+      "progress": 45
+    }
+  }
+}
+```
+
+#### 4.2.4 Export Assets
+**Trigger:** User clicks "Export" button  
+**Endpoint:** `GET /api/assets/export`  
+**Authentication:** Required
+
+**Request:**
+```http
+GET /api/assets/export?format=csv&filter=all HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+```
+
+**Query Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `format` | string | No | "csv" | "csv", "json", "xlsx", "pdf" |
+| `filter` | string | No | "all" | Same as assets list filter |
+
+**Expected Response:**
+- Content-Type: `text/csv`, `application/json`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, or `application/pdf`
+- Content-Disposition: `attachment; filename="assets-export-2026-03-11.csv"`
+- Body: File content
+
+---
+
+### 4.3 New Scan Page (`/new-scan`)
+
+#### 4.3.1 Create New Scan
+**Component:** `NewScan.tsx`  
+**Trigger:** User clicks "Start Scan" button  
+**Endpoint:** `POST /api/scans`  
+**Authentication:** Required
+
+**Request:**
+```http
+POST /api/scans HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "targets": [
+    "acme-corp.com",
+    "203.0.113.0/24",
+    "*.acme-corp.com"
+  ],
+  "scanType": "full_scan",
+  "options": {
+    "portScanning": true,
+    "sslAnalysis": true,
+    "dnsEnumeration": true,
+    "subdomainDiscovery": true,
+    "technologyDetection": true,
+    "vulnerabilityAssessment": false,
+    "screenshotCapture": false
+  },
+  "schedule": {
+    "type": "immediate",
+    "scheduledAt": null
+  },
+  "notifications": {
+    "emailOnCompletion": true,
+    "notifyOnCriticalFindings": true,
+    "slackWebhook": null,
+    "customWebhook": null
+  },
+  "priority": "normal",
+  "name": null,
+  "description": null,
+  "tags": []
+}
+```
+
+**Request Body Schema:**
+```typescript
+interface CreateScanRequest {
+  targets: string[];  // Array of domains, IPs, CIDR ranges
+  scanType: "full_scan" | "quick_scan" | "custom_scan";
+  options: {
+    portScanning: boolean;
+    sslAnalysis: boolean;
+    dnsEnumeration: boolean;
+    subdomainDiscovery: boolean;
+    technologyDetection: boolean;
+    vulnerabilityAssessment: boolean;
+    screenshotCapture: boolean;
+  };
+  schedule: {
+    type: "immediate" | "scheduled";
+    scheduledAt: string | null;  // ISO8601 timestamp if scheduled
+  };
+  notifications: {
+    emailOnCompletion: boolean;
+    notifyOnCriticalFindings: boolean;
+    slackWebhook: string | null;
+    customWebhook: string | null;
+  };
+  priority: "low" | "normal" | "high";
+  name?: string | null;
+  description?: string | null;
+  tags?: string[];
+}
+```
+
+**Expected Response (Success - 201):**
+```json
+{
+  "scanId": "550e8400-e29b-41d4-a716-446655440300",
+  "status": "queued",
+  "estimatedStartTime": "2026-03-11T13:00:00.000Z",
+  "estimatedDuration": 7200,
+  "queuePosition": 5,
+  "targetCount": 3,
+  "message": "Scan created successfully"
+}
+```
+
+**Expected Response (Validation Error - 422):**
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request parameters",
+    "details": [
+      {
+        "field": "targets",
+        "message": "At least one target is required"
+      },
+      {
+        "field": "targets[2]",
+        "message": "Invalid domain format: *.acme-corp.com"
+      }
+    ],
+    "timestamp": "2026-03-11T12:30:00.000Z",
+    "requestId": "req-12345"
+  }
+}
+```
+
+**Frontend State Mapping:**
+```typescript
+// Frontend state → Backend request mapping
+const scanTypeMap = {
+  'full': 'full_scan',
+  'quick': 'quick_scan',
+  'custom': 'custom_scan'
+};
+
+const scheduleMap = {
+  'immediate': { type: 'immediate', scheduledAt: null },
+  'later': { type: 'scheduled', scheduledAt: selectedDateTime }
+};
+```
+
+#### 4.3.2 Validate Targets (Optional but Recommended)
+**Trigger:** User clicks "Validate" or on blur of targets textarea  
+**Endpoint:** `POST /api/scans/validate-targets`  
+**Authentication:** Required
+
+**Request:**
+```http
+POST /api/scans/validate-targets HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+Content-Type: application/json
+
+{
+  "targets": [
+    "acme-corp.com",
+    "203.0.113.0/24",
+    "invalid-target"
+  ]
+}
+```
+
+**Expected Response:**
+```json
+{
+  "valid": [
+    {
+      "target": "acme-corp.com",
+      "type": "domain",
+      "resolved": true,
+      "ipAddress": "203.0.113.45"
+    },
+    {
+      "target": "203.0.113.0/24",
+      "type": "cidr",
+      "ipCount": 256
+    }
+  ],
+  "invalid": [
+    {
+      "target": "invalid-target",
+      "reason": "Invalid domain format",
+      "suggestion": null
+    }
+  ],
+  "summary": {
+    "totalTargets": 3,
+    "validTargets": 2,
+    "invalidTargets": 1
+  }
+}
+```
+
+---
+
+### 4.4 System Status (Sidebar Footer)
+
+#### 4.4.1 Get System Health
+**Component:** `ReconLayout.tsx`  
+**Trigger:** Page load, Poll every 60 seconds  
+**Endpoint:** `GET /api/system/health`  
+**Authentication:** Required
+
+**Request:**
+```http
+GET /api/system/health HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+```
+
+**Expected Response:**
+```json
+{
+  "status": "operational",
+  "services": {
+    "scanner": {
+      "status": "operational",
+      "uptime": 99.99,
+      "activeScans": 3,
+      "queuedScans": 12
+    },
+    "database": {
+      "status": "operational",
+      "responseTime": 45,
+      "connections": 23
+    },
+    "api": {
+      "status": "operational",
+      "responseTime": 120,
+      "requestsPerMinute": 1234
+    }
+  },
+  "lastUpdated": "2026-03-11T12:30:00.000Z"
+}
+```
+
+**Status Values:**
+- `operational` → Green dot, "All Systems Operational"
+- `degraded` → Yellow dot, "Degraded Performance"
+- `down` → Red dot, "System Unavailable"
+
+---
+
+## 5. Authentication Requirements
+
+### 5.1 Authentication Method
+**Type:** JWT (JSON Web Token) Bearer Authentication
+
+### 5.2 Authentication Flow
+
+#### 5.2.1 Login
+**Endpoint:** `POST /api/auth/login`  
+**Public:** Yes (no authentication required)
+
+**Request:**
+```http
+POST /api/auth/login HTTP/1.1
+Host: api.example.com
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "securePassword123"
+}
+```
+
+**Expected Response (Success - 200):**
+```json
+{
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com",
+    "name": "John Doe",
+    "role": "admin",
+    "avatar": "https://api.example.com/avatars/user.jpg",
+    "organizationId": "org-12345"
+  },
+  "tokens": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "expiresIn": 3600
+  },
+  "permissions": ["read:assets", "write:scans", "admin:users"]
+}
+```
+
+**Expected Response (Error - 401):**
+```json
+{
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "Invalid email or password"
+  }
+}
+```
+
+#### 5.2.2 Token Storage
+**Frontend Implementation:**
+```typescript
+// Store tokens in localStorage or sessionStorage
+localStorage.setItem('sf_recon_auth_token', response.tokens.accessToken);
+localStorage.setItem('sf_recon_refresh_token', response.tokens.refreshToken);
+localStorage.setItem('sf_recon_user', JSON.stringify(response.user));
+```
+
+**Security Considerations:**
+- Use `httpOnly` cookies for refresh tokens (backend responsibility)
+- Implement token expiry handling
+- Clear tokens on logout
+
+#### 5.2.3 Token Refresh
+**Endpoint:** `POST /api/auth/refresh`  
+**Public:** Yes
+
+**Request:**
+```http
+POST /api/auth/refresh HTTP/1.1
+Host: api.example.com
+Content-Type: application/json
+
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**Expected Response:**
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "expiresIn": 3600
+}
+```
+
+#### 5.2.4 Logout
+**Endpoint:** `POST /api/auth/logout`  
+**Authentication:** Required
+
+**Request:**
+```http
+POST /api/auth/logout HTTP/1.1
+Host: api.example.com
+Authorization: Bearer {token}
+```
+
+**Expected Response:**
+```json
+{
+  "message": "Logged out successfully"
+}
+```
+
+**Frontend Implementation:**
+```typescript
+// Clear stored tokens
+localStorage.removeItem('sf_recon_auth_token');
+localStorage.removeItem('sf_recon_refresh_token');
+localStorage.removeItem('sf_recon_user');
+// Redirect to login page
+```
+
+### 5.3 Request Authentication
+All authenticated requests MUST include the access token:
+
+```http
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+### 5.4 Token Expiry Handling
+**Frontend Implementation Strategy:**
+
+```typescript
+// Axios interceptor example
+axios.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      
+      try {
+        const refreshToken = localStorage.getItem('sf_recon_refresh_token');
+        const response = await axios.post('/api/auth/refresh', { refreshToken });
+        
+        localStorage.setItem('sf_recon_auth_token', response.data.accessToken);
+        originalRequest.headers['Authorization'] = `Bearer ${response.data.accessToken}`;
+        
+        return axios(originalRequest);
+      } catch (refreshError) {
+        // Redirect to login
+        window.location.href = '/login';
+        return Promise.reject(refreshError);
+      }
+    }
+    
+    return Promise.reject(error);
+  }
+);
+```
+
+---
+
+## 6. Data Flow
+
+### 6.1 Dashboard Page Data Flow
+
+```
+User Opens Dashboard
+       ↓
+[ReconDashboard Component Mounts]
+       ↓
+Parallel API Calls:
+├─ GET /api/dashboard/metrics
+├─ GET /api/dashboard/risk-trend?timeframe=30d
+├─ GET /api/dashboard/findings-distribution
+└─ GET /api/scans/recent?limit=10
+       ↓
+[Loading State Displayed]
+       ↓
+[Responses Received]
+       ↓
+[Component State Updated]
+       ↓
+[UI Re-renders with Data]
+       ↓
+[Charts Render (Recharts)]
+       ↓
+[Auto-refresh Timer Set (30s)]
+```
+
+**Code Implementation Pattern:**
+```typescript
+useEffect(() => {
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      const [metrics, riskTrend, findings, recentScans] = await Promise.all([
+        api.get('/dashboard/metrics'),
+        api.get('/dashboard/risk-trend?timeframe=30d'),
+        api.get('/dashboard/findings-distribution'),
+        api.get('/scans/recent?limit=10')
+      ]);
+      
+      setMetricsData(metrics.data);
+      setRiskTrendData(riskTrend.data.data);
+      setFindingsData(findings.data.distribution);
+      setRecentScansData(recentScans.data.scans);
+    } catch (error) {
+      handleError(error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  fetchDashboardData();
+  const interval = setInterval(fetchDashboardData, 30000); // Refresh every 30s
+  return () => clearInterval(interval);
+}, []);
+```
+
+### 6.2 Asset Inventory Data Flow
+
+```
+User Opens Asset Inventory
+       ↓
+[AssetInventory Component Mounts]
+       ↓
+Parallel API Calls:
+├─ GET /api/assets?page=1&limit=10&filter=all
+└─ GET /api/assets/stats
+       ↓
+[Loading State Displayed]
+       ↓
+[Responses Received]
+       ↓
+[Component State Updated]
+       ↓
+[UI Re-renders with Data]
+       ↓
+User Changes Filter (e.g., "Domains")
+       ↓
+[State Updated: activeFilter = 'domains']
+       ↓
+GET /api/assets?page=1&limit=10&filter=domains
+       ↓
+[UI Re-renders with Filtered Data]
+       ↓
+User Searches "acme"
+       ↓
+[Debounced Input (300ms)]
+       ↓
+GET /api/assets?page=1&limit=10&filter=all&search=acme
+       ↓
+[UI Re-renders with Search Results]
+       ↓
+User Clicks "Play" Button on Asset
+       ↓
+POST /api/assets/{assetId}/scan
+       ↓
+[Toast Notification: "Scan queued successfully"]
+       ↓
+[Optional: Refresh assets list]
+```
+
+**Search Debouncing Pattern:**
+```typescript
+const [searchQuery, setSearchQuery] = useState('');
+const debouncedSearch = useDebounce(searchQuery, 300);
+
+useEffect(() => {
+  fetchAssets({ search: debouncedSearch });
+}, [debouncedSearch]);
+
+function useDebounce(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    
+    return () => clearTimeout(handler);
+  }, [value, delay]);
+  
+  return debouncedValue;
+}
+```
+
+### 6.3 New Scan Data Flow
+
+```
+User Opens New Scan Page
+       ↓
+[NewScan Component Mounts]
+       ↓
+[Form State Initialized with Defaults]
+       ↓
+User Fills in Targets:
+  - acme-corp.com
+  - 203.0.113.0/24
+       ↓
+User Selects "Full Scan"
+       ↓
+[State Updated: scanType = 'full']
+       ↓
+User Toggles Options:
+  - Port Scanning: ON
+  - SSL Analysis: ON
+  - Vulnerability Assessment: OFF
+       ↓
+[State Updated: scanOptions]
+       ↓
+User Clicks "Start Scan"
+       ↓
+[Form Validation]
+       ↓
+POST /api/scans
+{
+  targets: ["acme-corp.com", "203.0.113.0/24"],
+  scanType: "full_scan",
+  options: { ... },
+  ...
+}
+       ↓
+[Loading State: Button Disabled]
+       ↓
+Backend Response (Success):
+{
+  scanId: "...",
+  status: "queued",
+  ...
+}
+       ↓
+[Toast Notification: "Scan started successfully"]
+       ↓
+[Redirect to Dashboard or Scan Details Page]
+```
+
+**Form Submission Pattern:**
+```typescript
+const handleStartScan = async () => {
+  setSubmitting(true);
+  
+  try {
+    // Build request payload
+    const payload = {
+      targets: targetsInput.split('\n').filter(t => t.trim()),
+      scanType: scanTypeMap[scanType],
+      options: scanOptions,
+      schedule: {
+        type: schedule === 'immediate' ? 'immediate' : 'scheduled',
+        scheduledAt: schedule === 'later' ? selectedDateTime : null
+      },
+      notifications: {
+        emailOnCompletion: notifications.emailCompletion,
+        notifyOnCriticalFindings: notifications.criticalFindings,
+        slackWebhook: notifications.slackIntegration ? slackWebhook : null,
+        customWebhook: notifications.webhookNotification ? customWebhook : null
+      },
+      priority: 'normal'
+    };
+    
+    const response = await api.post('/scans', payload);
+    
+    toast.success(`Scan started successfully! Queue position: ${response.data.queuePosition}`);
+    navigate('/'); // Redirect to dashboard
+    
+  } catch (error) {
+    if (error.response?.status === 422) {
+      // Validation errors
+      const errors = error.response.data.error.details;
+      errors.forEach(err => {
+        toast.error(`${err.field}: ${err.message}`);
+      });
+    } else {
+      toast.error('Failed to start scan. Please try again.');
+    }
+  } finally {
+    setSubmitting(false);
+  }
+};
+```
+
+---
+
+## 7. Error Handling
+
+### 7.1 Standard Error Response Format
+All error responses MUST follow this format:
+
+```json
+{
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable error message",
+    "details": [
+      {
+        "field": "fieldName",
+        "message": "Field-specific error message"
+      }
+    ],
+    "timestamp": "2026-03-11T12:30:00.000Z",
+    "requestId": "req-12345"
+  }
+}
+```
+
+### 7.2 HTTP Status Codes
+| Status Code | Meaning | Frontend Action |
+|-------------|---------|-----------------|
+| 200 | Success | Process response data |
+| 201 | Created | Show success message, redirect |
+| 400 | Bad Request | Display validation errors |
+| 401 | Unauthorized | Attempt token refresh, or redirect to login |
+| 403 | Forbidden | Show "Insufficient permissions" message |
+| 404 | Not Found | Show "Resource not found" message |
+| 409 | Conflict | Show conflict message (e.g., scan already running) |
+| 422 | Validation Error | Display field-specific errors |
+| 429 | Rate Limit | Show "Too many requests, please wait" |
+| 500 | Server Error | Show generic error, log to monitoring |
+| 503 | Service Unavailable | Show "Service temporarily unavailable" |
+
+### 7.3 Frontend Error Handling Strategy
+
+#### 7.3.1 Global Error Handler
+```typescript
+// src/utils/errorHandler.ts
+export const handleApiError = (error: any) => {
+  if (!error.response) {
+    // Network error
+    toast.error('Network error. Please check your connection.');
+    return;
+  }
+  
+  const { status, data } = error.response;
+  
+  switch (status) {
+    case 400:
+      toast.error(data.error?.message || 'Invalid request');
+      break;
+      
+    case 401:
+      // Handled by axios interceptor (token refresh)
+      break;
+      
+    case 403:
+      toast.error('You do not have permission to perform this action');
+      break;
+      
+    case 404:
+      toast.error('Resource not found');
+      break;
+      
+    case 409:
+      toast.error(data.error?.message || 'Conflict occurred');
+      break;
+      
+    case 422:
+      // Validation errors - handled by form components
+      if (data.error?.details) {
+        data.error.details.forEach((detail: any) => {
+          toast.error(`${detail.field}: ${detail.message}`);
+        });
+      }
+      break;
+      
+    case 429:
+      toast.error('Too many requests. Please wait a moment.');
+      break;
+      
+    case 500:
+    case 503:
+      toast.error('Server error. Please try again later.');
+      // Log to monitoring service
+      console.error('Server error:', data);
+      break;
+      
+    default:
+      toast.error('An unexpected error occurred');
+  }
+};
+```
+
+#### 7.3.2 Component-Level Error Handling
+```typescript
+// Example in ReconDashboard.tsx
+const fetchDashboardData = async () => {
+  setLoading(true);
+  setError(null);
+  
+  try {
+    const response = await api.get('/dashboard/metrics');
+    setData(response.data);
+  } catch (error) {
+    setError('Failed to load dashboard data');
+    handleApiError(error);
+  } finally {
+    setLoading(false);
+  }
+};
+
+// In render:
+if (error) {
+  return (
+    <div className="p-8">
+      <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+        <p className="text-red-700">{error}</p>
+        <button onClick={fetchDashboardData} className="mt-2 text-blue-600">
+          Retry
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+### 7.4 Validation Error Display
+For form validation errors (422), display errors inline:
+
+```typescript
+// NewScan.tsx form submission
+catch (error) {
+  if (error.response?.status === 422) {
+    const errors = error.response.data.error.details;
+    const fieldErrors = {};
+    
+    errors.forEach(err => {
+      fieldErrors[err.field] = err.message;
+    });
+    
+    setFormErrors(fieldErrors);
+  }
+}
+
+// In render:
+{formErrors.targets && (
+  <p className="text-sm text-red-600 mt-1">{formErrors.targets}</p>
+)}
+```
+
+### 7.5 Loading States
+Show loading indicators during API calls:
+
+```typescript
+{loading ? (
+  <div className="flex items-center justify-center h-64">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+  </div>
+) : (
+  <div>{/* Data display */}</div>
+)}
+```
+
+---
+
+## 8. Folder Structure Expectations
+
+### 8.1 Recommended API Integration Structure
+
+```
+src/
+├── api/
+│   ├── client.ts              # Axios instance configuration
+│   ├── auth.ts                # Authentication API calls
+│   ├── dashboard.ts           # Dashboard API calls
+│   ├── assets.ts              # Asset management API calls
+│   ├── scans.ts               # Scan operations API calls
+│   └── system.ts              # System health API calls
+│
+├── hooks/
+│   ├── useAuth.ts             # Authentication hook
+│   ├── useDashboard.ts        # Dashboard data fetching hook
+│   ├── useAssets.ts           # Assets data fetching hook
+│   └── useScans.ts            # Scans data fetching hook
+│
+├── config/
+│   └── api.ts                 # API configuration (base URL, timeout, etc.)
+│
+├── types/
+│   ├── api.ts                 # API request/response types
+│   ├── dashboard.ts           # Dashboard data types
+│   ├── assets.ts              # Asset data types
+│   └── scans.ts               # Scan data types
+│
+├── utils/
+│   ├── errorHandler.ts        # Global error handling
+│   ├── dateFormatter.ts       # Date formatting utilities
+│   └── apiHelpers.ts          # Common API helper functions
+│
+└── app/
+    ├── pages/
+    │   └── recon/
+    │       ├── ReconDashboard.tsx
+    │       ├── AssetInventory.tsx
+    │       └── NewScan.tsx
+    └── ...
+```
+
+### 8.2 Example Implementation Files
+
+#### 8.2.1 API Client Configuration
+```typescript
+// src/config/api.ts
+export const API_CONFIG = {
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api',
+  timeout: parseInt(import.meta.env.VITE_API_TIMEOUT) || 30000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+};
+```
+
+```typescript
+// src/api/client.ts
+import axios from 'axios';
+import { API_CONFIG } from '../config/api';
+
+const apiClient = axios.create({
+  baseURL: API_CONFIG.baseURL,
+  timeout: API_CONFIG.timeout,
+  headers: API_CONFIG.headers,
+});
+
+// Request interceptor - Add auth token
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('sf_recon_auth_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Response interceptor - Handle token refresh
+apiClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+      
+      try {
+        const refreshToken = localStorage.getItem('sf_recon_refresh_token');
+        const response = await axios.post(`${API_CONFIG.baseURL}/auth/refresh`, {
+          refreshToken
+        });
+        
+        localStorage.setItem('sf_recon_auth_token', response.data.accessToken);
+        originalRequest.headers.Authorization = `Bearer ${response.data.accessToken}`;
+        
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        localStorage.clear();
+        window.location.href = '/login';
+        return Promise.reject(refreshError);
+      }
+    }
+    
+    return Promise.reject(error);
+  }
+);
+
+export default apiClient;
+```
+
+#### 8.2.2 Dashboard API Module
+```typescript
+// src/api/dashboard.ts
+import apiClient from './client';
+import type { DashboardMetrics, RiskTrendData, FindingsDistribution } from '../types/dashboard';
+
+export const dashboardApi = {
+  getMetrics: () => 
+    apiClient.get<DashboardMetrics>('/dashboard/metrics'),
+  
+  getRiskTrend: (timeframe: string = '30d', granularity: string = 'daily') =>
+    apiClient.get<RiskTrendData>('/dashboard/risk-trend', {
+      params: { timeframe, granularity }
+    }),
+  
+  getFindingsDistribution: () =>
+    apiClient.get<FindingsDistribution>('/dashboard/findings-distribution'),
+};
+```
+
+#### 8.2.3 Custom Hook Example
+```typescript
+// src/hooks/useDashboard.ts
+import { useState, useEffect } from 'react';
+import { dashboardApi } from '../api/dashboard';
+import { handleApiError } from '../utils/errorHandler';
+import type { DashboardMetrics } from '../types/dashboard';
+
+export const useDashboardMetrics = (refreshInterval: number = 30000) => {
+  const [data, setData] = useState<DashboardMetrics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  const fetchMetrics = async () => {
+    try {
+      setLoading(true);
+      const response = await dashboardApi.getMetrics();
+      setData(response.data);
+      setError(null);
+    } catch (err) {
+      setError('Failed to load dashboard metrics');
+      handleApiError(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  useEffect(() => {
+    fetchMetrics();
+    
+    if (refreshInterval > 0) {
+      const interval = setInterval(fetchMetrics, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [refreshInterval]);
+  
+  return { data, loading, error, refetch: fetchMetrics };
+};
+```
+
+#### 8.2.4 TypeScript Types
+```typescript
+// src/types/dashboard.ts
+export interface DashboardMetrics {
+  totalAssets: {
+    value: number;
+    change: {
+      percentage: number;
+      direction: 'increase' | 'decrease' | 'neutral';
+      timeframe: string;
+    };
+  };
+  criticalFindings: {
+    value: number;
+    change: {
+      percentage: number;
+      direction: 'increase' | 'decrease' | 'neutral';
+      timeframe: string;
+    };
+  };
+  riskScore: {
+    value: number;
+    maxValue: number;
+    change: {
+      value: number;
+      direction: 'increase' | 'decrease' | 'neutral';
+      timeframe: string;
+    };
+  };
+  lastScan: {
+    timestamp: string;
+    relativeTime: string;
+    nextScan: {
+      timestamp: string;
+      relativeTime: string;
+    };
+  };
+}
+
+export interface RiskTrendDataPoint {
+  date: string;
+  dateLabel: string;
+  score: number;
+}
+
+export interface RiskTrendData {
+  data: RiskTrendDataPoint[];
+  timeframe: string;
+  granularity: string;
+}
+
+export interface FindingDistributionItem {
+  name: string;
+  value: number;
+  fill: string;
+}
+
+export interface FindingsDistribution {
+  distribution: FindingDistributionItem[];
+  total: number;
+}
+```
+
+---
+
+## 9. Deployment Requirements
+
+### 9.1 Environment Variables
+
+#### 9.1.1 Development Environment
+```env
+VITE_API_BASE_URL=http://localhost:8000/api
+VITE_WS_URL=ws://localhost:8000/ws
+VITE_ENV=development
+```
+
+#### 9.1.2 Staging Environment
+```env
+VITE_API_BASE_URL=https://api-staging.reconengine.com/api
+VITE_WS_URL=wss://api-staging.reconengine.com/ws
+VITE_ENV=staging
+```
+
+#### 9.1.3 Production Environment
+```env
+VITE_API_BASE_URL=https://api.reconengine.com/api
+VITE_WS_URL=wss://api.reconengine.com/ws
+VITE_ENV=production
+```
+
+### 9.2 Build Configuration
+
+#### 9.2.1 Build Command
+```bash
+# Install dependencies
+pnpm install
+
+# Build for production
+pnpm build
+
+# Output directory: dist/
+```
+
+#### 9.2.2 Vite Build Output
+```
+dist/
+├── index.html
+├── assets/
+│   ├── index-[hash].js
+│   ├── index-[hash].css
+│   └── ... (other assets)
+└── favicon.ico
+```
+
+### 9.3 CORS Configuration
+Backend MUST allow requests from frontend domain(s):
+
+**Development:**
+```
+Origin: http://localhost:5173
+```
+
+**Production:**
+```
+Origin: https://reconengine.com
+Origin: https://www.reconengine.com
+```
+
+### 9.4 API Base URL Configuration
+The frontend uses environment variables for API URLs. Ensure:
+
+1. **No trailing slashes** in `VITE_API_BASE_URL`
+   - ✅ Correct: `https://api.example.com/api`
+   - ❌ Wrong: `https://api.example.com/api/`
+
+2. **API versioning** (if applicable):
+   - Use: `https://api.example.com/v1/api`
+
+3. **Subdomain vs. path-based routing:**
+   - Subdomain: `https://api.reconengine.com/api`
+   - Path-based: `https://reconengine.com/api/v1`
+
+### 9.5 Reverse Proxy Configuration (Optional)
+If using a reverse proxy (e.g., Nginx) to serve both frontend and backend:
+
+```nginx
+# Nginx configuration example
+server {
+    listen 443 ssl;
+    server_name reconengine.com;
+    
+    # Frontend (React SPA)
+    location / {
+        root /var/www/frontend/dist;
+        try_files $uri $uri/ /index.html;
+    }
+    
+    # Backend API
+    location /api/ {
+        proxy_pass http://backend:8000/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+    
+    # WebSocket
+    location /ws {
+        proxy_pass http://backend:8000/ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+    }
+}
+```
+
+### 9.6 Health Check Endpoint
+Frontend may call health check endpoint before full initialization:
+
+**Endpoint:** `GET /api/health`  
+**Response:**
+```json
+{
+  "status": "ok",
+  "version": "1.0.0",
+  "timestamp": "2026-03-11T12:30:00.000Z"
+}
+```
+
+---
+
+## 10. WebSocket Integration
+
+### 10.1 WebSocket Connection (Future Enhancement)
+For real-time updates (scan progress, new findings, etc.):
+
+**WebSocket URL:** `wss://api.example.com/ws`  
+**Authentication:** JWT token in connection params or initial message
+
+### 10.2 Connection Example
+```typescript
+// src/utils/websocket.ts
+const connectWebSocket = () => {
+  const token = localStorage.getItem('sf_recon_auth_token');
+  const ws = new WebSocket(`${WS_URL}?token=${token}`);
+  
+  ws.onopen = () => {
+    console.log('WebSocket connected');
+    
+    // Subscribe to events
+    ws.send(JSON.stringify({
+      type: 'subscribe',
+      events: ['scan.progress', 'scan.completed', 'finding.new']
+    }));
+  };
+  
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    
+    switch (data.event) {
+      case 'scan.progress':
+        updateScanProgress(data.data);
+        break;
+      case 'scan.completed':
+        handleScanCompleted(data.data);
+        break;
+      case 'finding.new':
+        notifyNewFinding(data.data);
+        break;
+    }
+  };
+  
+  ws.onerror = (error) => {
+    console.error('WebSocket error:', error);
+  };
+  
+  ws.onclose = () => {
+    console.log('WebSocket disconnected');
+    // Implement reconnection logic
+  };
+  
+  return ws;
+};
+```
+
+### 10.3 WebSocket Event Format
+```json
+{
+  "event": "scan.progress",
+  "timestamp": "2026-03-11T12:30:00.000Z",
+  "data": {
+    "scanId": "550e8400-e29b-41d4-a716-446655440300",
+    "progress": 45,
+    "currentPhase": "port_scanning",
+    "message": "Scanning ports 1-1000"
+  }
+}
+```
+
+---
+
+## 11. Testing API Integration
+
+### 11.1 Manual Testing Checklist
+
+#### Dashboard Page
+- [ ] Metrics load on page load
+- [ ] Risk score chart displays correctly
+- [ ] Findings distribution chart displays correctly
+- [ ] Recent scans table populates
+- [ ] Auto-refresh works (30s interval)
+- [ ] Error states display correctly
+- [ ] Loading states display correctly
+
+#### Asset Inventory Page
+- [ ] Assets list loads with pagination
+- [ ] Filter buttons work (all, domains, IPs, cloud, webapps)
+- [ ] Search functionality works (with debounce)
+- [ ] Stats cards display correctly
+- [ ] Export button triggers download
+- [ ] "Play" button triggers asset scan
+- [ ] "View" button navigates to asset details
+- [ ] Sorting works (if implemented)
+
+#### New Scan Page
+- [ ] Form accepts multiple targets
+- [ ] Scan type selection works
+- [ ] Scan options checkboxes work
+- [ ] Schedule radio buttons work
+- [ ] Date/time picker appears for scheduled scans
+- [ ] Notification checkboxes work
+- [ ] "Start Scan" button submits form
+- [ ] Validation errors display correctly
+- [ ] Success message displays and redirects
+
+#### Authentication
+- [ ] Login works with valid credentials
+- [ ] Login fails with invalid credentials
+- [ ] Token is stored in localStorage
+- [ ] Token is sent with API requests
+- [ ] Token refresh works on 401
+- [ ] Logout clears tokens and redirects
+
+### 11.2 API Testing Tools
+
+#### Postman Collection
+Create a Postman collection with all endpoints for backend testing.
+
+#### cURL Examples
+```bash
+# Login
+curl -X POST https://api.example.com/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"user@example.com","password":"password"}'
+
+# Get dashboard metrics (with token)
+curl -X GET https://api.example.com/api/dashboard/metrics \
+  -H "Authorization: Bearer {token}"
+
+# Create scan
+curl -X POST https://api.example.com/api/scans \
+  -H "Authorization: Bearer {token}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "targets": ["example.com"],
+    "scanType": "quick_scan",
+    "options": {"portScanning": true},
+    "schedule": {"type": "immediate"},
+    "notifications": {},
+    "priority": "normal"
+  }'
+```
+
+### 11.3 Mock API Server (Development)
+For frontend development without backend, use:
+
+**MSW (Mock Service Worker):**
+```bash
+pnpm add -D msw
+```
+
+```typescript
+// src/mocks/handlers.ts
+import { http, HttpResponse } from 'msw';
+
+export const handlers = [
+  http.get('/api/dashboard/metrics', () => {
+    return HttpResponse.json({
+      totalAssets: { value: 1247, change: { percentage: 12, direction: 'increase', timeframe: 'last month' } },
+      // ... rest of mock data
+    });
+  }),
+];
+```
+
+---
+
+## Appendix A: Quick Reference
+
+### API Endpoints Summary
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/auth/login` | POST | User login |
+| `/api/auth/refresh` | POST | Refresh access token |
+| `/api/auth/logout` | POST | User logout |
+| `/api/dashboard/metrics` | GET | Dashboard metrics |
+| `/api/dashboard/risk-trend` | GET | Risk score trend data |
+| `/api/dashboard/findings-distribution` | GET | Findings by severity |
+| `/api/scans/recent` | GET | Recent scan list |
+| `/api/assets` | GET | Assets list (paginated) |
+| `/api/assets/stats` | GET | Asset statistics |
+| `/api/assets/{id}/scan` | POST | Trigger asset scan |
+| `/api/assets/export` | GET | Export assets |
+| `/api/scans` | POST | Create new scan |
+| `/api/scans/validate-targets` | POST | Validate scan targets |
+| `/api/system/health` | GET | System health status |
+
+### Environment Variables
+```env
+VITE_API_BASE_URL=http://localhost:8000/api
+VITE_WS_URL=ws://localhost:8000/ws
+VITE_API_TIMEOUT=30000
+VITE_AUTH_TOKEN_KEY=sf_recon_auth_token
+VITE_REFRESH_TOKEN_KEY=sf_recon_refresh_token
+VITE_ENV=development
+```
+
+### HTTP Status Codes
+- `200` - Success
+- `201` - Created
+- `400` - Bad Request
+- `401` - Unauthorized (token refresh or login required)
+- `403` - Forbidden
+- `404` - Not Found
+- `409` - Conflict
+- `422` - Validation Error
+- `429` - Rate Limited
+- `500` - Server Error
+- `503` - Service Unavailable
+
+---
+
+## Contact & Support
+
+**For integration questions:**
+- Frontend Team: frontend@reconengine.com
+- Backend Team: backend@reconengine.com
+- DevOps Team: devops@reconengine.com
+
+**Documentation Updates:**
+Submit pull requests to update this document as APIs evolve.
+
+---
+
+**End of Document**

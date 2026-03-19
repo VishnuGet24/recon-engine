@@ -1,0 +1,122 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create User</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: #f8fafc;
+      color: #0f172a;
+      padding: 24px;
+    }
+    .card {
+      max-width: 600px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
+    }
+    h1 {
+      margin-top: 0;
+      margin-bottom: 12px;
+    }
+    .row {
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.92rem;
+    }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #cbd5e1;
+    }
+    .roles {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px;
+      background: #f8fafc;
+    }
+    .roles label {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 11px 16px;
+      background: #0f766e;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .success {
+      margin-bottom: 12px;
+      padding: 10px;
+      border-radius: 8px;
+      background: #dcfce7;
+      border: 1px solid #22c55e;
+      color: #166534;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Create User</h1>
+    <p>Only admin role can access this page.</p>
+
+    {% if success %}
+      <div class="success">User created successfully.</div>
+    {% endif %}
+    {% if error %}
+      <div class="success" style="background:#fee2e2;border-color:#ef4444;color:#991b1b;">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/admin/users" autocomplete="off">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row">
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" maxlength="64" required>
+      </div>
+
+      <div class="row">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" maxlength="255" required>
+      </div>
+
+      <div class="row">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required>
+      </div>
+
+      <div class="row">
+        <label>Roles</label>
+        <div class="roles">
+          {% for role in roles %}
+          <label>
+            <input type="checkbox" name="roles" value="{{ role.name }}" {% if role.name == 'basic' %}checked{% endif %}>
+            {{ role.name }}
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button type="submit">Create User</button>
+    </form>
+  </div>
+</body>
+</html>

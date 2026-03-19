@@ -1,0 +1,44 @@
+2026-03-02 22:54:27,535 WARNING app csrf_validation_failed endpoint=auth_public.login_legacy ip=127.0.0.1 has_expected=True has_presented=False
+2026-03-02 22:56:06,693 WARNING app csrf_validation_failed endpoint=auth_public.login_legacy ip=127.0.0.1 has_expected=True has_presented=False
+2026-03-08 17:57:12,355 WARNING app csrf_validation_failed endpoint=scan_public.scan_start ip=127.0.0.1 has_expected=True has_presented=False
+2026-03-09 21:58:28,146 ERROR app Exception on /login [POST]
+Traceback (most recent call last):
+  File "C:\project_recon\backend\venv\Lib\site-packages\flask\app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+  File "C:\project_recon\backend\venv\Lib\site-packages\flask\app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+  File "C:\project_recon\backend\venv\Lib\site-packages\flask_cors\extension.py", line 176, in wrapped_function
+    return cors_after_request(app.make_response(f(*args, **kwargs)))
+                                                ~^^^^^^^^^^^^^^^^^
+  File "C:\project_recon\backend\venv\Lib\site-packages\flask\app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+  File "C:\project_recon\backend\venv\Lib\site-packages\flask\app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "C:\project_recon\backend\routes\auth_routes.py", line 106, in login_legacy
+    return _login_impl()
+  File "C:\project_recon\backend\routes\auth_routes.py", line 65, in _login_impl
+    return redirect(url_for("dashboard"))
+                    ~~~~~~~^^^^^^^^^^^^^
+  File "C:\project_recon\backend\venv\Lib\site-packages\flask\helpers.py", line 239, in url_for
+    return current_app.url_for(
+           ~~~~~~~~~~~~~~~~~~~^
+        endpoint,
+        ^^^^^^^^^
+    ...<4 lines>...
+        **values,
+        ^^^^^^^^^
+    )
+    ^
+  File "C:\project_recon\backend\venv\Lib\site-packages\flask\app.py", line 1121, in url_for
+    return self.handle_url_build_error(error, endpoint, values)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\project_recon\backend\venv\Lib\site-packages\flask\app.py", line 1110, in url_for
+    rv = url_adapter.build(  # type: ignore[union-attr]
+        endpoint,
+    ...<3 lines>...
+        force_external=_external,
+    )
+  File "C:\project_recon\backend\venv\Lib\site-packages\werkzeug\routing\map.py", line 901, in build
+    raise BuildError(endpoint, values, method, self)
+werkzeug.routing.exceptions.BuildError: Could not build url for endpoint 'dashboard'. Did you mean 'auth.login_page' instead?

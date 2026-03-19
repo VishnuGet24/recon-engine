@@ -1,0 +1,24 @@
+API -- KU3LPTW3SCDTO42VCJAW0PA0085M8HCFOJ31BRYYL2Y471P54CCEKW0COOAKMVZ6
+----------------------------------------------------------------------
+
+venv\Scripts\activate
+-----------------------------------------
+python app.py
+-----------------------------------------
+curl -X POST http://127.0.0.1:5000/scan ^
+-H "Content-Type: application/json" ^
+-d "{\"target\":\"juice-shop.herokuapp.com\"}"
+-----------------------------------------
+curl http://127.0.0.1:5000/scan/b51f14b5-1d91-4439-b0c6-fe7bb840af34
+
+----------------------------------------
+Go to project root:      cd C:\project_recon
+Activate venv again:     backend\venv\Scripts\activate
+Start Backend:           cd backend
+                          python app.py
+
+Go to project root:cd C: \project_recon
+Activate venv again: backend\venv\Scripts\activate
+Then Go to: cd cli
+run : python main.py
+

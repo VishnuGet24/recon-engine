@@ -1,0 +1,64 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: recon_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-recon_root_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-recon_db}
+      MYSQL_USER: ${MYSQL_USER:-recon_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-recon_password}
+    ports:
+      # Bind to localhost only to avoid exposing MySQL on the LAN.
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3307}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-recon_root_password}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: always
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      FLASK_DEBUG: ${FLASK_DEBUG:-0}
+      SECRET_KEY: ${SECRET_KEY:-change-this-in-production}
+      JWT_SECRET: ${JWT_SECRET:-change-this-in-production}
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: ${MYSQL_USER:-recon_user}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-recon_password}
+      DB_NAME: ${MYSQL_DATABASE:-recon_db}
+      # Table creation is handled once in the container entrypoint.
+      ENABLE_DB_CREATE_ALL: ${ENABLE_DB_CREATE_ALL:-0}
+      DB_AUTO_INIT: ${DB_AUTO_INIT:-1}
+      WAIT_FOR_DB: ${WAIT_FOR_DB:-1}
+      WAIT_FOR_DB_TIMEOUT_SECONDS: ${WAIT_FOR_DB_TIMEOUT_SECONDS:-60}
+      WAIT_FOR_DB_INTERVAL_SECONDS: ${WAIT_FOR_DB_INTERVAL_SECONDS:-2}
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
+      GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-0}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./deploy/nginx/recon.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  mysql_data:
