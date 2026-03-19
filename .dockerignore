@@ -1,0 +1,13 @@
+.git
+.gitignore
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+backend/venv/
+backend/logs/
+backend/data/
+recon_frontend/node_modules/
+recon_frontend/dist/
+cybersecurity_saasdashboard_backup/node_modules/
