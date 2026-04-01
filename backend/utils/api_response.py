@@ -30,5 +30,6 @@ def api_error(
             "requestId": request_id or str(uuid4()),
         }
     }
-    return jsonify(payload), status
-
+    response = jsonify(payload)
+    response.status_code = status
+    return response
