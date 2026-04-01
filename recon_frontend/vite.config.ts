@@ -18,6 +18,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      '/api': 'http://127.0.0.1:5000',
       '/admin': 'http://127.0.0.1:5000',
       '/auth': 'http://127.0.0.1:5000',
       '/csrf': 'http://127.0.0.1:5000',

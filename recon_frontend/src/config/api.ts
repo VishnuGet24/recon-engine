@@ -1,10 +1,16 @@
 const rawApiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
 const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
+function defaultWsUrl() {
+  if (typeof window === 'undefined') return '';
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${window.location.host}/ws`;
+}
+
 export const API_CONFIG = {
-  baseURL: rawApiBaseUrl || (rawApiBase ? `${rawApiBase}/api` : (import.meta.env.DEV ? 'http://localhost:5000/api' : '/api')),
+  baseURL: rawApiBaseUrl || (rawApiBase ? `${rawApiBase}/api` : '/api'),
   timeout: Number.parseInt(import.meta.env.VITE_API_TIMEOUT || '', 10) || 30000,
-  wsURL: (import.meta.env.VITE_WS_URL || '').trim() || 'ws://localhost:8000/ws',
+  wsURL: (import.meta.env.VITE_WS_URL || '').trim() || defaultWsUrl(),
 };
 
 export const AUTH_STORAGE_KEYS = {

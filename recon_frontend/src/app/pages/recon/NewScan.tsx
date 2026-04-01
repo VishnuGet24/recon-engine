@@ -8,7 +8,74 @@ import { handleApiError } from '../../../utils/errorHandler';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
 
-type ScanTypeUi = 'quick' | 'custom' | 'full';
+type ScanTypeUi = 'passive' | 'active' | 'full';
+
+const ALL_SCANNERS = [
+  'subdomain_enum',
+  'dns_enum',
+  'whois',
+  'port_scan',
+  'http_probe',
+  'url_discovery',
+  'ssl_check',
+  'headers_analysis',
+  'technology_fingerprint',
+  'hosting_detection',
+  'vulnerability_surface',
+  'risk_scoring',
+  'report_generation',
+] as const;
+type ScannerKey = (typeof ALL_SCANNERS)[number];
+
+const scanConfig: Record<ScanTypeUi, readonly ScannerKey[]> = {
+  passive: [
+    'subdomain_enum',
+    'dns_enum',
+    'whois',
+    'url_discovery',
+    'headers_analysis',
+    'technology_fingerprint',
+    'hosting_detection',
+  ],
+  active: ['port_scan', 'http_probe', 'ssl_check', 'vulnerability_surface'],
+  full: ALL_SCANNERS,
+};
+
+type ScanOptionKey =
+  | 'portScanning'
+  | 'dnsEnumeration'
+  | 'subdomainDiscovery'
+  | 'technologyDetection'
+  | 'sslAnalysis'
+  | 'screenshotCapture'
+  | 'vulnerabilityAssessment';
+
+const UI_OPTIONS: { key: ScanOptionKey; label: string; scanner: ScannerKey }[] = [
+  { key: 'subdomainDiscovery', label: 'Subdomain Discovery', scanner: 'subdomain_enum' },
+  { key: 'dnsEnumeration', label: 'DNS Enumeration', scanner: 'dns_enum' },
+  { key: 'technologyDetection', label: 'Technology Detection', scanner: 'technology_fingerprint' },
+  { key: 'portScanning', label: 'Port Scanning', scanner: 'port_scan' },
+  { key: 'sslAnalysis', label: 'SSL Analysis', scanner: 'ssl_check' },
+  { key: 'screenshotCapture', label: 'Screenshot Capture', scanner: 'http_probe' },
+  { key: 'vulnerabilityAssessment', label: 'Vulnerability Assessment', scanner: 'vulnerability_surface' },
+];
+
+function uniqueScanners(scanners: readonly ScannerKey[]) {
+  return Array.from(new Set(scanners));
+}
+
+function buildOptionsPayload(scanners: readonly ScannerKey[]) {
+  const selected = new Set(scanners);
+  return {
+    portScanning: selected.has('port_scan'),
+    sslAnalysis: selected.has('ssl_check'),
+    dnsEnumeration: selected.has('dns_enum'),
+    subdomainDiscovery: selected.has('subdomain_enum'),
+    technologyDetection: selected.has('technology_fingerprint'),
+    vulnerabilityAssessment: selected.has('vulnerability_surface'),
+    screenshotCapture: selected.has('http_probe'),
+  };
+}
 
 function parseTargets(raw: string) {
   return raw
@@ -17,12 +84,20 @@ function parseTargets(raw: string) {
     .filter(Boolean);
 }
 
+function getScanTypeLabel(type?: string, fallback?: string) {
+  if (type === 'quick_scan') return 'Passive Scan';
+  if (type === 'custom_scan') return 'Active Scan';
+  if (type === 'full_scan') return 'Full Scan';
+  return fallback || 'N/A';
+}
+
 export default function NewScan() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const [targetsText, setTargetsText] = useState(searchParams.get('target') ?? '');
-  const [scanType, setScanType] = useState<ScanTypeUi>('quick');
+  const [scanType, setScanType] = useState<ScanTypeUi>('passive');
+  const [selectedScanners, setSelectedScanners] = useState<ScannerKey[]>(() => [...scanConfig.passive]);
   const [schedule, setSchedule] = useState<'immediate' | 'later'>('immediate');
   const [scheduledDate, setScheduledDate] = useState('');
   const [scheduledTime, setScheduledTime] = useState('');
@@ -33,11 +108,15 @@ export default function NewScan() {
   const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
+    setSelectedScanners([...scanConfig[scanType]]);
+  }, [scanType]);
+
+  useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         const data = await getRecentScans({ limit: 5, offset: 0 });
-        if (mounted) setRecentScans(data.scans);
+        if (mounted) setRecentScans(Array.isArray(data?.scans) ? data.scans : []);
       } catch {
         if (mounted) setRecentScans([]);
       }
@@ -48,32 +127,23 @@ export default function NewScan() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin) setScanType('full');
+    if (isAdmin) {
+      setScanType('full');
+      return;
+    }
+
+    setScanType((prev) => (prev === 'full' ? 'passive' : prev));
   }, [isAdmin]);
 
   const scanTypes = useMemo(
     () => [
-      { id: 'quick' as const, name: 'Quick Scan', icon: Target, description: 'Fast recon baseline', duration: '~1–5 minutes' },
-      { id: 'custom' as const, name: 'Custom Scan', icon: Zap, description: 'Tune options per target', duration: '~5–20 minutes' },
-      { id: 'full' as const, name: 'Full Scan', icon: Settings, description: 'Comprehensive scan pipeline', duration: '~15–60 minutes' },
+      { id: 'passive' as const, name: 'Passive Scan', icon: Target, description: 'Passive recon scanners only', duration: '~1-5 minutes' },
+      { id: 'active' as const, name: 'Active Scan', icon: Zap, description: 'Interactive probing scanners', duration: '~5-20 minutes' },
+      { id: 'full' as const, name: 'Full Scan', icon: Settings, description: 'All supported scanners', duration: '~15-60 minutes' },
     ],
     [],
   );
 
-  const scanOptions = useMemo(
-    () => ({
-      portScanning: true,
-      sslAnalysis: true,
-      dnsEnumeration: true,
-      subdomainDiscovery: true,
-      technologyDetection: true,
-      vulnerabilityAssessment: false,
-      screenshotCapture: false,
-    }),
-    [],
-  );
-
-  const [options, setOptions] = useState(scanOptions);
   const [notifications, setNotifications] = useState({
     emailOnCompletion: true,
     notifyOnCriticalFindings: true,
@@ -81,8 +151,8 @@ export default function NewScan() {
     customWebhook: '',
   });
 
-  const handleOptionChange = (key: keyof typeof options) => setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
-  const scanTypeMap = useMemo(() => ({ quick: 'quick_scan', custom: 'custom_scan', full: 'full_scan' } as const), []);
+  const optionsPayload = useMemo(() => buildOptionsPayload(selectedScanners), [selectedScanners]);
+  const scanTypeMap = useMemo(() => ({ passive: 'quick_scan', active: 'custom_scan', full: 'full_scan' } as const), []);
 
   const buildScheduledAt = () => {
     if (!scheduledDate || !scheduledTime) return null;
@@ -124,7 +194,7 @@ export default function NewScan() {
       const response = await createScan({
         targets,
         scanType: scanTypeMap[scanType],
-        options,
+        options: optionsPayload,
         schedule: schedule === 'later' ? { type: 'scheduled', scheduledAt } : { type: 'immediate', scheduledAt: null },
         notifications: {
           emailOnCompletion: notifications.emailOnCompletion,
@@ -215,16 +285,29 @@ export default function NewScan() {
 
           <div>
             <label className="block text-sm font-medium text-gray-900 mb-4">Scan Options</label>
+            <p className="text-xs text-gray-500 mb-3">Options are selected automatically based on scan type.</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {Object.entries(options).map(([key, value]) => {
-                const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase());
-                return (
-                  <label key={key} className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
-                    <input type="checkbox" checked={value} onChange={() => handleOptionChange(key as any)} className="w-5 h-5 text-blue-500 border-gray-300 rounded focus:ring-blue-500" />
-                    <span className="text-gray-700">{label}</span>
+              {UI_OPTIONS.map((opt) => (
+                <label key={opt.key} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 cursor-not-allowed">
+                  <input type="checkbox" checked={selectedScanners.includes(opt.scanner)} readOnly disabled className="w-5 h-5 text-blue-500 border-gray-300 rounded focus:ring-blue-500" />
+                  <span className="text-gray-700">{opt.label}</span>
+                </label>
+              ))}
+            </div>
+
+            <div className="mt-6">
+              <label className="block text-sm font-medium text-gray-900 mb-2">Scanners Included</label>
+              <p className="text-xs text-gray-500 mb-3">
+                {uniqueScanners(selectedScanners).length} / {ALL_SCANNERS.length} scanners enabled for this scan type.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {ALL_SCANNERS.map((scanner) => (
+                  <label key={scanner} className="flex items-center gap-3 p-2 rounded-lg bg-gray-50">
+                    <input type="checkbox" checked={selectedScanners.includes(scanner)} readOnly disabled className="w-4 h-4 text-blue-500 border-gray-300 rounded focus:ring-blue-500" />
+                    <span className="text-xs text-gray-700 font-mono">{scanner}</span>
                   </label>
-                );
-              })}
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -273,7 +356,7 @@ export default function NewScan() {
           <div className="flex items-center justify-between">
             <button type="button" onClick={() => void onStart()} disabled={submitting} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium hover:shadow-lg disabled:opacity-60">
               <Play className="w-5 h-5" />
-              {submitting ? 'Starting…' : 'Start Scan'}
+              {submitting ? 'Starting...' : 'Start Scan'}
             </button>
             <button type="button" onClick={() => void onValidate()} className="text-sm text-gray-600 hover:text-gray-900">
               Validate targets
@@ -284,13 +367,22 @@ export default function NewScan() {
         <div className="bg-white rounded-2xl p-6 shadow-sm">
           <h3 className="text-xl font-semibold text-gray-900 mb-4">Recent Scans</h3>
           <div className="space-y-2">
-            {recentScans.map((scan) => (
-              <button key={scan.id} type="button" onClick={() => navigate(`/scan/${scan.id}`)} className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50">
+            {recentScans.map((scan, idx) => (
+              <button
+                key={scan?.id ?? idx}
+                type="button"
+                onClick={() => {
+                  if (scan?.id) navigate(`/scan/${scan.id}`);
+                }}
+                className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-gray-50"
+              >
                 <div className="text-left">
-                  <p className="text-sm font-medium text-gray-900">{scan.target}</p>
-                  <p className="text-xs text-gray-500">{scan.typeLabel} • {scan.status}</p>
+                  <p className="text-sm font-medium text-gray-900">{scan?.target || 'N/A'}</p>
+                  <p className="text-xs text-gray-500">
+                    {getScanTypeLabel(scan?.type, scan?.typeLabel)} {' \u2022 '} {scan?.status || 'N/A'}
+                  </p>
                 </div>
-                <span className="text-xs text-gray-500">{scan.relativeTime}</span>
+                <span className="text-xs text-gray-500">{scan?.relativeTime || ''}</span>
               </button>
             ))}
             {!recentScans.length ? <p className="text-sm text-gray-500">No recent scans.</p> : null}
