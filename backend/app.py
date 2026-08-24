@@ -1,4 +1,4 @@
-﻿"""Application entrypoint for secure session-authenticated recon backend."""
+"""Application entrypoint for secure session-authenticated recon backend."""
 
 from __future__ import annotations
 
@@ -217,9 +217,35 @@ def _register_cli_commands(app: Flask) -> None:
         click.echo(f"Admin user created with id={user.id}")
 
 
-def create_app() -> Flask:
+def create_app(config_override: dict | None = None) -> Flask:
     app = Flask(__name__)
     app.config.from_object(Config)
+    if config_override:
+        app.config.update(config_override)
+
+    if str(app.config.get("SQLALCHEMY_DATABASE_URI", "")).startswith("sqlite:"):
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"connect_args": {"check_same_thread": False}}
+
+    if str(app.config.get("APP_ENV", "")).lower() == "production":
+        insecure_defaults = (
+            "replace-this-in-production",
+            "change-this-in-production",
+            "change-this-to-a-64-char-random-secret",
+            "",
+        )
+        secret_key = str(app.config.get("SECRET_KEY") or "")
+        if secret_key in insecure_defaults:
+            raise RuntimeError(
+                "Insecure default SECRET_KEY detected in production environment. "
+                "You must configure a strong, unique SECRET_KEY environment variable in production."
+            )
+
+        jwt_secret = str(app.config.get("JWT_SECRET") or "")
+        if jwt_secret in insecure_defaults:
+            raise RuntimeError(
+                "Insecure default JWT_SECRET detected in production environment. "
+                "You must configure a strong, unique JWT_SECRET environment variable in production."
+            )
 
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 

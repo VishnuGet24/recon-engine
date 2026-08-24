@@ -25,7 +25,7 @@ services:
       dockerfile: backend/Dockerfile
     restart: always
     environment:
-      APP_ENV: ${APP_ENV:-production}
+      APP_ENV: ${APP_ENV:-development}
       FLASK_DEBUG: ${FLASK_DEBUG:-0}
       SECRET_KEY: ${SECRET_KEY:-change-this-in-production}
       JWT_SECRET: ${JWT_SECRET:-change-this-in-production}

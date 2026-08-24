@@ -1,4 +1,4 @@
-﻿# Recon / Attack Surface Scanner
+# Recon / Attack Surface Scanner
 
 ## Folder Structure
 
@@ -167,8 +167,9 @@ docker compose up -d --build
 1. Provision Ubuntu server and open ports 80/443.
 2. Install Docker + Docker Compose plugin.
 3. Copy project to `/opt/recon`.
-4. Set secure production env values:
-   - strong `SECRET_KEY`
+4. Set secure production env values (required; production fails fast if default placeholders are used):
+   - strong, high-entropy `SECRET_KEY` (must not use default placeholders)
+   - strong, high-entropy `JWT_SECRET` (must not use default placeholders)
    - `SESSION_COOKIE_SECURE=1`
    - production DB credentials
    - `CORS_ORIGINS=https://your-domain.com`
