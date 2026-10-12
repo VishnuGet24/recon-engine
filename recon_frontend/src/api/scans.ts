@@ -54,6 +54,8 @@ export type ScanDetailsResponse = {
   status: string;
   progress: number;
   startedAt: string | null;
+  scheduledAt?: string | null;
+  estimatedStartTime?: string | null;
   completedAt: string | null;
   duration: number | null;
   findings: { total: number; critical: number; high: number; medium: number; low: number };

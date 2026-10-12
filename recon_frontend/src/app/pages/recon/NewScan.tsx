@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { Play, Settings, Target, Zap } from 'lucide-react';
+import { Clock, Play, Settings, Target, Zap } from 'lucide-react';
 
 import { getRecentScans } from '../../../api/dashboard';
 import { createScan, validateTargets } from '../../../api/scans';
 import { handleApiError } from '../../../utils/errorHandler';
+import { formatDateTime } from '../../../utils/date';
 import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
 
@@ -154,10 +155,52 @@ export default function NewScan() {
   const optionsPayload = useMemo(() => buildOptionsPayload(selectedScanners), [selectedScanners]);
   const scanTypeMap = useMemo(() => ({ passive: 'quick_scan', active: 'custom_scan', full: 'full_scan' } as const), []);
 
+  const minDate = useMemo(() => {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }, []);
+
+  const initScheduleDefaults = () => {
+    const next = new Date(Date.now() + 30 * 60 * 1000);
+    const yyyy = next.getFullYear();
+    const mm = String(next.getMonth() + 1).padStart(2, '0');
+    const dd = String(next.getDate()).padStart(2, '0');
+    const hh = String(next.getHours()).padStart(2, '0');
+    const min = String(next.getMinutes()).padStart(2, '0');
+    if (!scheduledDate) setScheduledDate(`${yyyy}-${mm}-${dd}`);
+    if (!scheduledTime) setScheduledTime(`${hh}:${min}`);
+  };
+
+  const setRelativeSchedule = (offsetMinutes: number) => {
+    const target = new Date(Date.now() + offsetMinutes * 60 * 1000);
+    const yyyy = target.getFullYear();
+    const mm = String(target.getMonth() + 1).padStart(2, '0');
+    const dd = String(target.getDate()).padStart(2, '0');
+    const hh = String(target.getHours()).padStart(2, '0');
+    const min = String(target.getMinutes()).padStart(2, '0');
+    setScheduledDate(`${yyyy}-${mm}-${dd}`);
+    setScheduledTime(`${hh}:${min}`);
+  };
+
+  const setTomorrowMorning = () => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const yyyy = tomorrow.getFullYear();
+    const mm = String(tomorrow.getMonth() + 1).padStart(2, '0');
+    const dd = String(tomorrow.getDate()).padStart(2, '0');
+    setScheduledDate(`${yyyy}-${mm}-${dd}`);
+    setScheduledTime('09:00');
+  };
+
   const buildScheduledAt = () => {
     if (!scheduledDate || !scheduledTime) return null;
     const dt = new Date(`${scheduledDate}T${scheduledTime}`);
-    return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+    if (Number.isNaN(dt.getTime())) return null;
+    if (dt.getTime() <= Date.now()) return 'PAST';
+    return dt.toISOString();
   };
 
   const onValidate = async () => {
@@ -183,19 +226,27 @@ export default function NewScan() {
       return;
     }
 
-    setSubmitting(true);
-    try {
-      const scheduledAt = schedule === 'later' ? buildScheduledAt() : null;
-      if (schedule === 'later' && !scheduledAt) {
+    let scheduledAt: string | null = null;
+    if (schedule === 'later') {
+      const result = buildScheduledAt();
+      if (!result) {
         toast.error('Scheduled date and time are required');
         return;
       }
+      if (result === 'PAST') {
+        toast.error('Scheduled time must be in the future');
+        return;
+      }
+      scheduledAt = result;
+    }
 
+    setSubmitting(true);
+    try {
       const response = await createScan({
         targets,
         scanType: scanTypeMap[scanType],
         options: optionsPayload,
-        schedule: schedule === 'later' ? { type: 'scheduled', scheduledAt } : { type: 'immediate', scheduledAt: null },
+        schedule: schedule === 'later' && scheduledAt ? { type: 'scheduled', scheduledAt } : { type: 'immediate', scheduledAt: null },
         notifications: {
           emailOnCompletion: notifications.emailOnCompletion,
           notifyOnCriticalFindings: notifications.notifyOnCriticalFindings,
@@ -207,6 +258,12 @@ export default function NewScan() {
         description: null,
         tags: [],
       });
+
+      if (schedule === 'later' && scheduledAt) {
+        toast.success(`Scan scheduled for ${formatDateTime(scheduledAt)}`);
+      } else {
+        toast.success('Scan initiated successfully');
+      }
 
       navigate(`/scan/${response.scanId}`);
     } catch (error) {
@@ -323,21 +380,82 @@ export default function NewScan() {
                 <span className="text-gray-700">Run immediately</span>
               </label>
               <label className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer">
-                <input type="radio" name="schedule" checked={schedule === 'later'} onChange={() => setSchedule('later')} className="w-5 h-5 text-blue-500 border-gray-300 focus:ring-blue-500" />
+                <input
+                  type="radio"
+                  name="schedule"
+                  checked={schedule === 'later'}
+                  onChange={() => {
+                    setSchedule('later');
+                    initScheduleDefaults();
+                  }}
+                  className="w-5 h-5 text-blue-500 border-gray-300 focus:ring-blue-500"
+                />
                 <span className="text-gray-700">Schedule for later</span>
               </label>
             </div>
 
             {schedule === 'later' ? (
-              <div className="mt-4 p-4 bg-gray-50 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
-                  <input type="date" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+              <div className="mt-4 p-5 bg-gray-50 rounded-xl border border-gray-200">
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                  <span className="text-xs font-medium text-gray-500">Quick presets:</span>
+                  <button
+                    type="button"
+                    onClick={() => setRelativeSchedule(30)}
+                    className="px-2.5 py-1 text-xs font-medium bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                  >
+                    +30 mins
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRelativeSchedule(60)}
+                    className="px-2.5 py-1 text-xs font-medium bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                  >
+                    +1 hour
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRelativeSchedule(120)}
+                    className="px-2.5 py-1 text-xs font-medium bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                  >
+                    +2 hours
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTomorrowMorning()}
+                    className="px-2.5 py-1 text-xs font-medium bg-white border border-gray-300 rounded-lg text-gray-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-colors"
+                  >
+                    Tomorrow 9:00 AM
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Time</label>
-                  <input type="time" value={scheduledTime} onChange={(e) => setScheduledTime(e.target.value)} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
+                    <input
+                      type="date"
+                      min={minDate}
+                      value={scheduledDate}
+                      onChange={(e) => setScheduledDate(e.target.value)}
+                      className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Time</label>
+                    <input
+                      type="time"
+                      value={scheduledTime}
+                      onChange={(e) => setScheduledTime(e.target.value)}
+                      className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    />
+                  </div>
                 </div>
+
+                {scheduledDate && scheduledTime ? (
+                  <p className="mt-3 text-xs text-blue-600 flex items-center gap-1.5 font-medium">
+                    <Clock className="w-3.5 h-3.5" />
+                    Target scheduled time: {formatDateTime(`${scheduledDate}T${scheduledTime}`)}
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -354,9 +472,14 @@ export default function NewScan() {
           </div>
 
           <div className="flex items-center justify-between">
-            <button type="button" onClick={() => void onStart()} disabled={submitting} className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium hover:shadow-lg disabled:opacity-60">
-              <Play className="w-5 h-5" />
-              {submitting ? 'Starting...' : 'Start Scan'}
+            <button
+              type="button"
+              onClick={() => void onStart()}
+              disabled={submitting}
+              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium hover:shadow-lg disabled:opacity-60 transition-all cursor-pointer"
+            >
+              {schedule === 'later' ? <Clock className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+              {submitting ? (schedule === 'later' ? 'Scheduling...' : 'Starting...') : schedule === 'later' ? 'Schedule Scan' : 'Start Scan'}
             </button>
             <button type="button" onClick={() => void onValidate()} className="text-sm text-gray-600 hover:text-gray-900">
               Validate targets

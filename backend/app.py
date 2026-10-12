@@ -20,6 +20,7 @@ from config import Config
 from extensions import db
 from models import User
 from routes import register_blueprints
+from routes.api_routes import start_scheduled_scanner_watchdog
 from security import init_security_controls
 from services.auth_service import hash_password, validate_username
 from services.rbac_service import seed_rbac_data
@@ -285,6 +286,7 @@ def create_app(config_override: dict | None = None) -> Flask:
     _register_error_handlers(app)
     _register_cli_commands(app)
     register_blueprints(app)
+    start_scheduled_scanner_watchdog(app)
     _register_frontend_routes(app)
 
     @app.get("/healthz")

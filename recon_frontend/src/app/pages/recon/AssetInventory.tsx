@@ -4,6 +4,7 @@ import { Download, Eye, Globe, Network, Package, Play, Search, ShieldAlert } fro
 
 import { exportAssets, getAssetStats, getAssets } from '../../../api/assets';
 import { handleApiError } from '../../../utils/errorHandler';
+import { formatDateTime } from '../../../utils/date';
 
 type AssetRow = {
   id: string;
@@ -68,7 +69,7 @@ export default function AssetInventory() {
             typeLabel: a.typeLabel,
             riskLevel: a.riskLevel,
             findings: a.findings,
-            lastScanLabel: a.lastScan?.timestamp ? new Date(a.lastScan.timestamp).toLocaleString() : a.lastScan?.relativeTime || '—',
+            lastScanLabel: a.lastScan?.timestamp ? formatDateTime(a.lastScan.timestamp) : a.lastScan?.relativeTime || '—',
             status: a.status,
             scanId: a.lastScan?.scanId || '',
           })),

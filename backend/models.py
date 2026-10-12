@@ -1,10 +1,11 @@
-﻿"""SQLAlchemy models mapped to existing scanner_db schema."""
+"""SQLAlchemy models mapped to existing scanner_db schema."""
 
 from __future__ import annotations
 
 from sqlalchemy import JSON
 
 from extensions import db
+from utils.api_response import to_iso_utc
 
 
 class UserRole(db.Model):
@@ -59,7 +60,7 @@ class User(db.Model):
             "is_active": bool(self.is_active),
             "roles": sorted(self.role_names),
             "permissions": sorted(self.permission_names),
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": to_iso_utc(self.created_at),
         }
 
 
@@ -122,8 +123,8 @@ class Scan(db.Model):
             "overall_risk": self.overall_risk,
             "confidence_score": float(self.confidence_score) if self.confidence_score is not None else None,
             "results": self.results_json,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "created_at": to_iso_utc(self.created_at),
+            "completed_at": to_iso_utc(self.completed_at),
         }
 
 
@@ -159,10 +160,10 @@ class Finding(db.Model):
             "cvss": None,
             "cve": None,
             "asset": {"id": None, "name": asset_name, "type": asset_type},
-            "scan": {"id": str(self.scan_id), "timestamp": self.discovered_at.isoformat() if self.discovered_at else None},
+            "scan": {"id": str(self.scan_id), "timestamp": to_iso_utc(self.discovered_at)},
             "status": self.status or "open",
-            "discoveredAt": self.discovered_at.isoformat() if self.discovered_at else None,
-            "updatedAt": self.updated_at.isoformat() if self.updated_at else (self.discovered_at.isoformat() if self.discovered_at else None),
+            "discoveredAt": to_iso_utc(self.discovered_at),
+            "updatedAt": to_iso_utc(self.updated_at) or to_iso_utc(self.discovered_at),
             "assignedTo": None,
             "proof": {},
             "remediation": {},
@@ -188,5 +189,5 @@ class AuditLog(db.Model):
             "action": self.action,
             "target": self.target,
             "ip_address": self.ip_address,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": to_iso_utc(self.created_at),
         }

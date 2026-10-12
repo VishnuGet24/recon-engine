@@ -1,4 +1,4 @@
-﻿"""Scan routes protected with session auth and RBAC decorators."""
+"""Scan routes protected with session auth and RBAC decorators."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from extensions import db
 from models import Scan
 from services.audit_service import log_action
 from services.scan_service import run_active_scan, run_full_scan, run_passive_scan
+from utils.api_response import to_iso_utc
 
 
 bp = Blueprint("scans", __name__, url_prefix="/scans")
@@ -169,7 +170,7 @@ def _run_scan(mode_override: str | None = None):
                 "target": target,
                 "mode": mode,
                 "requested_mode": mode,
-                "started_at": scan.created_at.isoformat() if scan.created_at else None,
+                "started_at": to_iso_utc(scan.created_at),
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "duration_ms": None,
             },
@@ -209,7 +210,7 @@ def _run_scan(mode_override: str | None = None):
                         "target": target,
                         "mode": mode,
                         "requested_mode": mode,
-                        "started_at": failed_scan.created_at.isoformat() if failed_scan.created_at else None,
+                        "started_at": to_iso_utc(failed_scan.created_at),
                         "completed_at": datetime.now(timezone.utc).isoformat(),
                         "duration_ms": None,
                     },

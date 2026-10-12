@@ -5,6 +5,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContaine
 
 import { getDashboardMetrics, getFindingsDistribution, getRecentScans, getRiskTrend } from '../../../api/dashboard';
 import { handleApiError } from '../../../utils/errorHandler';
+import { formatDateTime } from '../../../utils/date';
 
 function getStatusColor(status: string) {
   switch ((status || '').toLowerCase()) {
@@ -13,11 +14,13 @@ function getStatusColor(status: string) {
     case 'in_progress':
     case 'running':
       return 'bg-blue-100 text-blue-700';
+    case 'scheduled':
+      return 'bg-purple-100 text-purple-700';
     case 'failed':
       return 'bg-red-100 text-red-700';
     case 'queued':
     case 'pending':
-      return 'bg-gray-100 text-gray-700';
+      return 'bg-amber-100 text-amber-700';
     default:
       return 'bg-gray-100 text-gray-700';
   }
@@ -76,7 +79,7 @@ export default function ReconDashboard() {
   }, []);
 
   const metricCards = useMemo(() => {
-    const lastScanTs = metrics?.lastScan?.timestamp ? new Date(metrics.lastScan.timestamp).toLocaleString() : 'No scans yet';
+    const lastScanTs = metrics?.lastScan?.timestamp ? formatDateTime(metrics.lastScan.timestamp) : 'No scans yet';
     const riskValue = typeof metrics?.riskScore?.value === 'number' ? metrics.riskScore.value.toFixed(1) : '0.0';
 
     return [
@@ -234,7 +237,9 @@ export default function ReconDashboard() {
                   <td className="py-4 px-4">
                     <span className={`font-semibold ${scan.findings > 4 ? 'text-red-600' : 'text-gray-900'}`}>{scan.findings}</span>
                   </td>
-                  <td className="py-4 px-4 text-gray-500">{scan.startedAt ? new Date(scan.startedAt).toLocaleString() : 'Unknown'}</td>
+                  <td className="py-4 px-4 text-gray-500 text-sm">
+                    {scan.startedAt ? formatDateTime(scan.startedAt) : (scan.scheduledAt ? `Scheduled: ${formatDateTime(scan.scheduledAt)}` : 'Unknown')}
+                  </td>
                   <td className="py-4 px-4">
                     <button type="button" onClick={() => navigate(`/scan/${scan.id}`)} className="flex items-center gap-1 text-blue-600 hover:text-blue-700">
                       <span className="text-sm">View</span>

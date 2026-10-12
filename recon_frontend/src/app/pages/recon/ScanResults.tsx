@@ -5,20 +5,24 @@ import { AlertTriangle, Clock, Download, Globe, Shield } from 'lucide-react';
 import { Finding, getFindingsByScanId } from '../../../api/findings';
 import { getScanById, ScanDetailsResponse } from '../../../api/scans';
 import { handleApiError } from '../../../utils/errorHandler';
+import { formatDateTime } from '../../../utils/date';
 
 function statusColor(status: string) {
   switch ((status || '').toLowerCase()) {
     case 'completed':
-      return 'bg-green-100 text-green-700';
+      return 'bg-green-100 text-green-700 border border-green-200';
     case 'in_progress':
-      return 'bg-blue-100 text-blue-700';
+    case 'running':
+      return 'bg-blue-100 text-blue-700 border border-blue-200';
+    case 'scheduled':
+      return 'bg-purple-100 text-purple-700 border border-purple-200';
     case 'failed':
-      return 'bg-red-100 text-red-700';
+      return 'bg-red-100 text-red-700 border border-red-200';
     case 'queued':
     case 'pending':
-      return 'bg-gray-100 text-gray-700';
+      return 'bg-amber-100 text-amber-700 border border-amber-200';
     default:
-      return 'bg-gray-100 text-gray-700';
+      return 'bg-gray-100 text-gray-700 border border-gray-200';
   }
 }
 
@@ -50,42 +54,68 @@ export default function ScanResults() {
 
   useEffect(() => {
     let mounted = true;
-    setLoading(true);
-    setError(null);
-    setFindingsLoading(true);
-    setFindingsError(null);
-    setFindings([]);
+    let timerId: ReturnType<typeof setTimeout> | null = null;
 
-    (async () => {
-      const [scanResult, findingsResult] = await Promise.allSettled([
-        getScanById(scanId),
-        getFindingsByScanId(scanId, { limit: 100 }),
-      ]);
-
-      if (!mounted) return;
-
-      if (scanResult.status === 'fulfilled') {
-        setScan(scanResult.value);
-      } else {
-        setError('Failed to fetch scan details');
-        handleApiError(scanResult.reason);
+    const fetchScanData = async (isInitial = false) => {
+      if (isInitial) {
+        setLoading(true);
+        setError(null);
+        setFindingsLoading(true);
+        setFindingsError(null);
       }
 
-      if (findingsResult.status === 'fulfilled') {
-        const rawFindings = Array.isArray(findingsResult.value?.findings) ? findingsResult.value.findings : [];
-        const filtered = rawFindings.filter((finding) => String(finding?.scan?.id || '') === scanId);
-        setFindings(filtered.length ? filtered : rawFindings);
-      } else {
-        setFindingsError('Failed to fetch scan findings');
-        handleApiError(findingsResult.reason);
-      }
+      try {
+        const [scanResult, findingsResult] = await Promise.allSettled([
+          getScanById(scanId),
+          getFindingsByScanId(scanId, { limit: 100 }),
+        ]);
 
-      setLoading(false);
-      setFindingsLoading(false);
-    })();
+        if (!mounted) return;
+
+        let currentStatus = '';
+        if (scanResult.status === 'fulfilled') {
+          setScan(scanResult.value);
+          currentStatus = scanResult.value?.status || '';
+        } else if (isInitial) {
+          setError('Failed to fetch scan details');
+          handleApiError(scanResult.reason);
+        }
+
+        if (findingsResult.status === 'fulfilled') {
+          const rawFindings = Array.isArray(findingsResult.value?.findings) ? findingsResult.value.findings : [];
+          const filtered = rawFindings.filter((finding) => String(finding?.scan?.id || '') === scanId);
+          setFindings(filtered.length ? filtered : rawFindings);
+        } else if (isInitial) {
+          setFindingsError('Failed to fetch scan findings');
+          handleApiError(findingsResult.reason);
+        }
+
+        if (isInitial) {
+          setLoading(false);
+          setFindingsLoading(false);
+        }
+
+        // If scan is still active (scheduled, queued, or running), poll every 3 seconds
+        const activeStatuses = ['scheduled', 'queued', 'pending', 'in_progress', 'running'];
+        if (activeStatuses.includes(currentStatus.toLowerCase())) {
+          timerId = setTimeout(() => {
+            if (mounted) void fetchScanData(false);
+          }, 3000);
+        }
+      } catch {
+        if (mounted && isInitial) {
+          setError('Failed to load scan');
+          setLoading(false);
+          setFindingsLoading(false);
+        }
+      }
+    };
+
+    void fetchScanData(true);
 
     return () => {
       mounted = false;
+      if (timerId) clearTimeout(timerId);
     };
   }, [scanId]);
 
@@ -103,6 +133,9 @@ export default function ScanResults() {
     return <div className="p-8 text-red-600">{error || 'Scan not found'}</div>;
   }
 
+  const isScheduled = scan.status.toLowerCase() === 'scheduled';
+  const scheduledTimeDisplay = scan.scheduledAt || scan.estimatedStartTime;
+
   return (
     <div className="p-8">
       <div className="flex items-start justify-between mb-8">
@@ -116,51 +149,73 @@ export default function ScanResults() {
         <button
           type="button"
           onClick={() => window.print()}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:shadow-lg transition-all"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:shadow-lg transition-all cursor-pointer"
         >
           <Download className="w-4 h-4" />
           Export
         </button>
       </div>
 
+      {isScheduled ? (
+        <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 text-sm text-purple-900 flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Clock className="w-5 h-5 text-purple-600 shrink-0" />
+            <div>
+              <p className="font-semibold text-purple-900">Scan Scheduled</p>
+              <p className="text-purple-700 text-xs mt-0.5">
+                This scan is scheduled to start at <span className="font-semibold">{formatDateTime(scheduledTimeDisplay)}</span>. It will automatically begin and update live when the scheduled time arrives.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-5 border border-gray-100">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-5 border border-gray-100 shadow-sm">
           <p className="text-sm text-gray-500">Progress</p>
           <p className="text-2xl font-semibold text-gray-900">{scan.progress}%</p>
         </div>
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-5 border border-gray-100">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-5 border border-gray-100 shadow-sm">
           <p className="text-sm text-gray-500">Findings</p>
           <p className="text-2xl font-semibold text-gray-900">{scan.findings.total}</p>
         </div>
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-5 border border-gray-100">
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-5 border border-gray-100 shadow-sm">
           <p className="text-sm text-gray-500">Duration</p>
           <p className="text-2xl font-semibold text-gray-900">{durationLabel}</p>
         </div>
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-5 border border-gray-100">
-          <p className="text-sm text-gray-500">Started</p>
-          <p className="text-2xl font-semibold text-gray-900">{scan.startedAt ? new Date(scan.startedAt).toLocaleString() : '—'}</p>
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl p-5 border border-gray-100 shadow-sm">
+          <p className="text-sm text-gray-500">{isScheduled ? 'Scheduled For' : 'Started'}</p>
+          <p className="text-lg font-semibold text-gray-900 truncate">
+            {isScheduled ? formatDateTime(scheduledTimeDisplay) : (scan.startedAt ? formatDateTime(scan.startedAt) : '—')}
+          </p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-lg p-6 border border-gray-100">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Target</h3>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Target Information</h3>
           <div className="space-y-3 text-sm text-gray-700">
             <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4" />
-              Scan ID: {scan.id}
+              <Shield className="w-4 h-4 text-blue-500" />
+              Scan ID: <span className="font-mono text-xs">{scan.id}</span>
             </div>
             <div className="flex items-center gap-2">
-              <Globe className="w-4 h-4" />
-              Target: {scan.target}
+              <Globe className="w-4 h-4 text-blue-500" />
+              Target: <span className="font-semibold text-gray-900">{scan.target}</span>
+            </div>
+            {isScheduled ? (
+              <div className="flex items-center gap-2 text-purple-700">
+                <Clock className="w-4 h-4 text-purple-600" />
+                Scheduled Start: {formatDateTime(scheduledTimeDisplay)}
+              </div>
+            ) : null}
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-gray-400" />
+              Started: {scan.startedAt ? formatDateTime(scan.startedAt) : '—'}
             </div>
             <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4" />
-              Started: {scan.startedAt ? new Date(scan.startedAt).toLocaleString() : '—'}
-            </div>
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4" />
-              Completed: {scan.completedAt ? new Date(scan.completedAt).toLocaleString() : '—'}
+              <Clock className="w-4 h-4 text-gray-400" />
+              Completed: {scan.completedAt ? formatDateTime(scan.completedAt) : '—'}
             </div>
           </div>
         </div>
@@ -169,19 +224,19 @@ export default function ScanResults() {
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Findings Breakdown</h3>
           <div className="space-y-2 text-sm text-gray-700">
             <div className="flex items-center justify-between p-3 rounded-xl bg-gray-50">
-              <span>Critical</span>
+              <span className="font-medium text-red-700">Critical</span>
               <span className="font-semibold">{scan.findings.critical}</span>
             </div>
             <div className="flex items-center justify-between p-3 rounded-xl bg-gray-50">
-              <span>High</span>
+              <span className="font-medium text-orange-700">High</span>
               <span className="font-semibold">{scan.findings.high}</span>
             </div>
             <div className="flex items-center justify-between p-3 rounded-xl bg-gray-50">
-              <span>Medium</span>
+              <span className="font-medium text-yellow-700">Medium</span>
               <span className="font-semibold">{scan.findings.medium}</span>
             </div>
             <div className="flex items-center justify-between p-3 rounded-xl bg-gray-50">
-              <span>Low</span>
+              <span className="font-medium text-green-700">Low</span>
               <span className="font-semibold">{scan.findings.low}</span>
             </div>
           </div>
@@ -203,7 +258,9 @@ export default function ScanResults() {
 
         {findingsError ? <div className="text-sm text-red-600 mb-3">{findingsError}</div> : null}
         {!findingsLoading && findings.length === 0 ? (
-          <div className="text-sm text-gray-600">No findings reported for this scan.</div>
+          <div className="text-sm text-gray-600">
+            {isScheduled ? 'Scan has not run yet. Findings will appear once execution begins.' : 'No findings reported for this scan.'}
+          </div>
         ) : null}
 
         {findings.length ? (
@@ -232,7 +289,7 @@ export default function ScanResults() {
                     <td className="py-3 pr-4 align-top text-gray-700">{finding.description}</td>
                     <td className="py-3 pr-4 align-top">{finding.status}</td>
                     <td className="py-3 pr-4 align-top whitespace-nowrap">
-                      {finding.discoveredAt ? new Date(finding.discoveredAt).toLocaleString() : '—'}
+                      {finding.discoveredAt ? formatDateTime(finding.discoveredAt) : '—'}
                     </td>
                   </tr>
                 ))}

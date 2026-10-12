@@ -12,6 +12,7 @@ import hashlib
 import ipaddress
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -25,7 +26,7 @@ from extensions import db
 from models import AuditLog, Finding, Scan, User
 from services.auth_service import authenticate_user
 from services.scan_service import generate_findings, run_active_scan, run_full_scan, run_passive_scan, validate_target
-from utils.api_response import api_error, utc_now_iso
+from utils.api_response import api_error, to_iso_utc, utc_now_iso
 from utils.jwt_utils import JwtError, access_expiry_iso, decode_token, issue_tokens
 
 
@@ -34,12 +35,13 @@ bp = Blueprint("api", __name__, url_prefix="/api")
 _WILDCARD_DOMAIN_RE = re.compile(r"^\*\.(?!-)(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$")
 
 
-def _scan_executor() -> ThreadPoolExecutor:
-    executor = current_app.extensions.get("api_scan_executor")
+def _scan_executor(app: Any | None = None) -> ThreadPoolExecutor:
+    target_app = app or current_app
+    executor = target_app.extensions.get("api_scan_executor")
     if executor is None:
-        max_workers = int(current_app.config.get("API_SCAN_MAX_WORKERS", 4))
+        max_workers = int(target_app.config.get("API_SCAN_MAX_WORKERS", 4))
         executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="api-scan")
-        current_app.extensions["api_scan_executor"] = executor
+        target_app.extensions["api_scan_executor"] = executor
     return executor
 
 
@@ -54,11 +56,24 @@ def _relative_time(timestamp: datetime | None) -> str:
     now = datetime.now(timezone.utc)
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
-    delta = now - timestamp
-    seconds = int(delta.total_seconds())
-    if seconds < 60:
+    delta = timestamp - now
+    if delta.total_seconds() > 0:
+        seconds = int(delta.total_seconds())
+        if seconds < 60:
+            return "in a few seconds"
+        minutes = seconds // 60
+        if minutes < 60:
+            return f"in {minutes} minute{'s' if minutes != 1 else ''}"
+        hours = minutes // 60
+        if hours < 24:
+            return f"in {hours} hour{'s' if hours != 1 else ''}"
+        days = hours // 24
+        return f"in {days} day{'s' if days != 1 else ''}"
+
+    past_seconds = int(-delta.total_seconds())
+    if past_seconds < 60:
         return "just now"
-    minutes = seconds // 60
+    minutes = past_seconds // 60
     if minutes < 60:
         return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
     hours = minutes // 60
@@ -148,8 +163,10 @@ def _scan_type_from_mode(mode: str) -> tuple[str, str]:
 
 def _scan_status_normalize(status: str | None) -> str:
     value = (status or "").strip().lower()
-    if value in {"queued", "pending", "scheduled"}:
-        return value if value != "scheduled" else "pending"
+    if value == "scheduled":
+        return "scheduled"
+    if value in {"queued", "pending"}:
+        return "queued"
     if value in {"running", "in_progress"}:
         return "in_progress"
     if value in {"completed", "failed", "cancelled"}:
@@ -194,6 +211,8 @@ def _scan_logs_from_results(results: dict[str, Any]) -> list[dict[str, Any]]:
 def _scan_progress_from_results(*, status: str, results: dict[str, Any]) -> int:
     if status in {"completed", "failed", "cancelled"}:
         return 100
+    if status in {"scheduled", "queued", "pending"}:
+        return 0
     if not isinstance(results, dict):
         return 50 if status == "in_progress" else 0
 
@@ -489,11 +508,11 @@ def dashboard_metrics():
                 "change": {"value": 0, "direction": "neutral", "timeframe": "last scan"},
             },
             "lastScan": {
-                "timestamp": latest_ts.isoformat() if latest_ts else None,
+                "timestamp": to_iso_utc(latest_ts),
                 "relativeTime": _relative_time(latest_ts) if latest_ts else "",
                 "nextScan": {
-                    "timestamp": next_ts.isoformat() if next_ts else None,
-                    "relativeTime": "In 4 hours" if next_ts else "",
+                    "timestamp": to_iso_utc(next_ts),
+                    "relativeTime": _relative_time(next_ts) if next_ts else "",
                 },
             },
         }
@@ -577,7 +596,12 @@ def scans_recent():
     for scan in scans:
         scan_type, scan_type_label = _scan_type_from_mode(scan.scan_mode)
         status = _scan_status_normalize(scan.status)
-        started_at = scan.created_at
+
+        results = scan.results_json if isinstance(scan.results_json, dict) else {}
+        meta = results.get("meta") if isinstance(results.get("meta"), dict) else {}
+        scheduled_iso = meta.get("scheduled_at") or results.get("scheduled_at")
+
+        started_at = scan.created_at if status != "scheduled" else None
         completed_at = scan.completed_at
         duration = None
         if started_at and completed_at:
@@ -595,8 +619,9 @@ def scans_recent():
                 "typeLabel": scan_type_label,
                 "status": status,
                 "findings": _scan_findings_count(scan),
-                "startedAt": started_at.isoformat() if started_at else None,
-                "completedAt": completed_at.isoformat() if completed_at else None,
+                "startedAt": to_iso_utc(started_at),
+                "scheduledAt": scheduled_iso,
+                "completedAt": to_iso_utc(completed_at),
                 "duration": duration,
                 "relativeTime": _relative_time(scan.created_at),
             }
@@ -605,7 +630,8 @@ def scans_recent():
     return jsonify({"scans": items, "total": total, "limit": limit, "offset": offset})
 
 
-def _create_scan_row(*, user: User, target: str, mode: str, status: str) -> Scan:
+def _create_scan_row(*, user: User, target: str, mode: str, status: str, scheduled_at_iso: str | None = None) -> Scan:
+    started_at = None if status == "scheduled" else utc_now_iso()
     scan = Scan(
         user_id=user.id,
         target=target,
@@ -616,7 +642,8 @@ def _create_scan_row(*, user: User, target: str, mode: str, status: str) -> Scan
                 "target": target,
                 "mode": mode,
                 "requested_mode": mode,
-                "started_at": utc_now_iso(),
+                "started_at": started_at,
+                "scheduled_at": scheduled_at_iso,
                 "completed_at": None,
                 "duration_ms": None,
             },
@@ -625,6 +652,7 @@ def _create_scan_row(*, user: User, target: str, mode: str, status: str) -> Scan
             "scan_mode": mode,
             "requested_mode": mode,
             "status": status,
+            "scheduled_at": scheduled_at_iso,
         },
     )
     db.session.add(scan)
@@ -632,8 +660,8 @@ def _create_scan_row(*, user: User, target: str, mode: str, status: str) -> Scan
     return scan
 
 
-def _run_scan_in_background(*, scan_id: int):
-    app = current_app._get_current_object()
+def _run_scan_in_background(*, scan_id: int, app: Any | None = None):
+    target_app = app or current_app._get_current_object()
 
     def _job():
         with app.app_context():
@@ -852,7 +880,7 @@ def _run_scan_in_background(*, scan_id: int):
             finally:
                 db.session.remove()
 
-    _scan_executor().submit(_job)
+    _scan_executor(target_app).submit(_job)
 
 
 @bp.post("/scans")
@@ -893,7 +921,8 @@ def scans_create():
     else:
         try:
             network = ipaddress.ip_network(raw_target, strict=False)
-            target = str(next(network.hosts(), network.network_address))
+            hosts = list(network.hosts())
+            target = str(hosts[0] if hosts else network.network_address)
         except ValueError:
             target = raw_target
 
@@ -919,6 +948,8 @@ def scans_create():
             scheduled_at = datetime.fromisoformat(str(scheduled_at_raw).replace("Z", "+00:00"))
             if scheduled_at.tzinfo is None:
                 scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+            else:
+                scheduled_at = scheduled_at.astimezone(timezone.utc)
         except ValueError:
             return api_error(
                 status=422,
@@ -927,7 +958,8 @@ def scans_create():
                 details=[{"field": "schedule.scheduledAt", "message": "scheduledAt must be an ISO8601 timestamp"}],
             )
 
-        delay = (scheduled_at - datetime.now(timezone.utc)).total_seconds()
+        now_utc = datetime.now(timezone.utc)
+        delay = (scheduled_at - now_utc).total_seconds()
         if delay <= 0:
             return api_error(
                 status=422,
@@ -936,18 +968,22 @@ def scans_create():
                 details=[{"field": "schedule.scheduledAt", "message": "scheduledAt must be in the future"}],
             )
 
-        scan = _create_scan_row(user=user, target=target, mode=mode, status="scheduled")
+        scheduled_iso = to_iso_utc(scheduled_at)
+        scan = _create_scan_row(user=user, target=target, mode=mode, status="scheduled", scheduled_at_iso=scheduled_iso)
+
+        app_obj = current_app._get_current_object()
+        scan_id = scan.id
 
         def _start_later():
-            with current_app.app_context():
-                scan_row = db.session.get(Scan, scan.id)
-                if scan_row is None or scan_row.status == "cancelled":
+            with app_obj.app_context():
+                scan_row = db.session.get(Scan, scan_id)
+                if scan_row is None or scan_row.status in {"cancelled", "failed", "completed"}:
                     return
                 scan_row.status = "queued"
                 db.session.commit()
-                _run_scan_in_background(scan_id=scan.id)
+                _run_scan_in_background(scan_id=scan_id, app=app_obj)
 
-        timer = threading.Timer(delay, _start_later)
+        timer = threading.Timer(max(0.1, delay), _start_later)
         timer.daemon = True
         timer.start()
 
@@ -956,11 +992,12 @@ def scans_create():
                 {
                     "scanId": str(scan.id),
                     "status": "scheduled",
-                    "estimatedStartTime": scheduled_at.isoformat(),
+                    "estimatedStartTime": scheduled_iso,
+                    "scheduledAt": scheduled_iso,
                     "estimatedDuration": 7200 if mode == "full" else 1200 if mode == "active" else 300,
                     "queuePosition": 1,
                     "targetCount": len(normalized_targets),
-                    "message": "Scan created successfully",
+                    "message": "Scan scheduled successfully",
                 }
             ),
             201,
@@ -1124,7 +1161,12 @@ def scans_get(scan_id: str):
     status = _scan_status_normalize(scan.status)
     progress = _scan_progress_from_results(status=status, results=results)
 
-    started_at = scan.created_at
+    scheduled_at_iso = None
+    if isinstance(results, dict):
+        meta = results.get("meta") if isinstance(results.get("meta"), dict) else {}
+        scheduled_at_iso = meta.get("scheduled_at") or results.get("scheduled_at")
+
+    started_at = scan.created_at if status != "scheduled" else None
     completed_at = scan.completed_at
     duration = None
     if started_at and completed_at:
@@ -1156,8 +1198,10 @@ def scans_get(scan_id: str):
             "scanType": scan_type,
             "status": status,
             "progress": progress,
-            "startedAt": scan.created_at.isoformat() if scan.created_at else None,
-            "completedAt": scan.completed_at.isoformat() if scan.completed_at else None,
+            "startedAt": to_iso_utc(started_at),
+            "scheduledAt": scheduled_at_iso,
+            "estimatedStartTime": scheduled_at_iso,
+            "completedAt": to_iso_utc(completed_at),
             "duration": duration,
             "findings": findings,
             "assetsDiscovered": assets["assetsDiscovered"],
@@ -1195,8 +1239,8 @@ def scans_get_raw(scan_id: str):
             "scanId": str(scan.id),
             "target": scan.target,
             "status": _scan_status_normalize(scan.status),
-            "createdAt": scan.created_at.isoformat() if scan.created_at else None,
-            "completedAt": scan.completed_at.isoformat() if scan.completed_at else None,
+            "createdAt": to_iso_utc(scan.created_at),
+            "completedAt": to_iso_utc(scan.completed_at),
             "results": scan.results_json if isinstance(scan.results_json, dict) else {},
         }
     )
@@ -1332,7 +1376,7 @@ def assets_list():
                 "riskLevel": risk_level,
                 "findings": _scan_findings_count(scan),
                 "lastScan": {
-                    "timestamp": scan.created_at.isoformat() if scan.created_at else None,
+                    "timestamp": to_iso_utc(scan.created_at),
                     "relativeTime": _relative_time(scan.created_at),
                     "scanId": str(scan.id),
                 },
@@ -1343,8 +1387,8 @@ def assets_list():
                     "region": None,
                     "tags": [],
                 },
-                "createdAt": scan.created_at.isoformat() if scan.created_at else None,
-                "updatedAt": scan.created_at.isoformat() if scan.created_at else None,
+                "createdAt": to_iso_utc(scan.created_at),
+                "updatedAt": to_iso_utc(scan.created_at),
             }
         )
 
@@ -1452,7 +1496,7 @@ def assets_details(asset_id: str):
         scan_history.append(
             {
                 "scanId": str(scan.id),
-                "timestamp": scan.created_at.isoformat() if scan.created_at else None,
+                "timestamp": to_iso_utc(scan.created_at),
                 "type": scan_type,
                 "findings": _scan_findings_count(scan),
                 "riskScore": float(scan.risk_score) if scan.risk_score is not None else None,
@@ -1479,7 +1523,7 @@ def assets_details(asset_id: str):
                     "category": "security_misconfiguration",
                     "cvss": None,
                     "cve": None,
-                    "discoveredAt": latest.created_at.isoformat() if latest.created_at else None,
+                    "discoveredAt": to_iso_utc(latest.created_at),
                     "status": "open",
                 }
             )
@@ -1494,8 +1538,8 @@ def assets_details(asset_id: str):
             "riskScore": risk_score,
             "findings": len(findings),
             "status": "active",
-            "discoveryDate": scans[-1].created_at.isoformat() if scans and scans[-1].created_at else None,
-            "lastScan": {"timestamp": latest.created_at.isoformat() if latest.created_at else None, "scanId": str(latest.id), "duration": None},
+            "discoveryDate": to_iso_utc(scans[-1].created_at) if scans and scans[-1].created_at else None,
+            "lastScan": {"timestamp": to_iso_utc(latest.created_at) if latest else None, "scanId": str(latest.id), "duration": None},
             "scanHistory": scan_history,
             "findings": findings,
             "metadata": {"ipAddress": None, "ports": [], "technologies": [], "certificates": [], "dns": {"a": [], "aaaa": [], "mx": [], "txt": []}},
@@ -1552,7 +1596,7 @@ def assets_export():
                 "type": asset_type,
                 "riskLevel": _risk_level(scan),
                 "findings": _scan_findings_count(scan),
-                "lastScan": scan.created_at.isoformat() if scan.created_at else None,
+                "lastScan": to_iso_utc(scan.created_at),
                 "status": _scan_status_normalize(scan.status),
             }
         )
@@ -1628,7 +1672,7 @@ def scans_queue():
                 "priority": "normal",
                 "estimatedStartTime": utc_now_iso(),
                 "submittedBy": scan.user.username if scan.user else "",
-                "submittedAt": scan.created_at.isoformat() if scan.created_at else None,
+                "submittedAt": to_iso_utc(scan.created_at),
             }
         )
 
@@ -1739,7 +1783,7 @@ def notifications_list():
                 "message": f"{log.action} {log.target or ''}".strip(),
                 "severity": severity,
                 "read": False,
-                "timestamp": log.created_at.isoformat() if log.created_at else None,
+                "timestamp": to_iso_utc(log.created_at),
                 "relatedEntity": {"type": "scan", "id": str(log.id)},
                 "actionUrl": "/",
             }
@@ -1763,3 +1807,55 @@ def notifications_mark_read(notification_id: str):
     if not isinstance(auth, tuple):
         return auth
     return jsonify({"id": notification_id, "read": True, "timestamp": utc_now_iso()})
+
+
+def _check_and_run_due_scheduled_scans(app: Any) -> None:
+    """Check for scheduled scans whose scheduled start time has arrived and queue them."""
+    try:
+        with app.app_context():
+            scheduled_scans = Scan.query.filter_by(status="scheduled").all()
+            if not scheduled_scans:
+                return
+
+            now_utc = datetime.now(timezone.utc)
+            for scan in scheduled_scans:
+                results = scan.results_json if isinstance(scan.results_json, dict) else {}
+                meta = results.get("meta") if isinstance(results.get("meta"), dict) else {}
+                scheduled_raw = meta.get("scheduled_at") or results.get("scheduled_at")
+                if not scheduled_raw:
+                    continue
+
+                try:
+                    sched_dt = datetime.fromisoformat(str(scheduled_raw).replace("Z", "+00:00"))
+                    if sched_dt.tzinfo is None:
+                        sched_dt = sched_dt.replace(tzinfo=timezone.utc)
+                    else:
+                        sched_dt = sched_dt.astimezone(timezone.utc)
+                except ValueError:
+                    continue
+
+                if sched_dt <= now_utc:
+                    app.logger.info("Triggering due scheduled scan id=%s for target=%s", scan.id, scan.target)
+                    scan.status = "queued"
+                    db.session.commit()
+                    _run_scan_in_background(scan_id=scan.id, app=app)
+    except Exception:
+        app.logger.exception("Error in _check_and_run_due_scheduled_scans")
+
+
+def start_scheduled_scanner_watchdog(app: Any) -> None:
+    """Run a periodic background thread that ensures due scheduled scans are run."""
+    if app.config.get("TESTING"):
+        return
+
+    def _watchdog_loop():
+        time.sleep(2)
+        while True:
+            try:
+                _check_and_run_due_scheduled_scans(app)
+            except Exception:
+                app.logger.exception("Error in scheduled scan watchdog loop")
+            time.sleep(5)
+
+    thread = threading.Thread(target=_watchdog_loop, daemon=True, name="scheduled-scan-watchdog")
+    thread.start()
