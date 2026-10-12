@@ -42,11 +42,34 @@ os.environ["ENABLE_DB_CREATE_ALL"] = "0"
 
 from app import create_app
 from extensions import db
+from services.rbac_service import seed_rbac_data
 
 app = create_app()
 with app.app_context():
     db.create_all()
-print("Database tables ensured (create_all).")
+    seed_rbac_data()
+    print("Database tables ensured and RBAC seeded.")
+
+    admin_email = (os.getenv("ADMIN_EMAIL") or "").strip().lower()
+    admin_password = os.getenv("ADMIN_PASSWORD") or ""
+    admin_username = (os.getenv("ADMIN_USERNAME") or "admin").strip()
+    if admin_email and admin_password:
+        from models import Role, User
+        from services.auth_service import hash_password
+        existing = User.query.filter((User.username == admin_username) | (User.email == admin_email)).first()
+        if not existing:
+            admin_role = Role.query.filter_by(name="admin").first()
+            user = User(
+                username=admin_username,
+                email=admin_email,
+                password_hash=hash_password(admin_password),
+                is_active=True,
+            )
+            if admin_role:
+                user.roles = [admin_role]
+            db.session.add(user)
+            db.session.commit()
+            print(f"Default admin user created: {admin_username} ({admin_email})")
 PY
 fi
 

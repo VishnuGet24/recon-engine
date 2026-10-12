@@ -44,6 +44,9 @@ services:
       GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-0}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://127.0.0.1}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     depends_on:
       mysql:
         condition: service_healthy
