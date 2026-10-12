@@ -7,6 +7,7 @@ import ReconDashboard from './pages/recon/ReconDashboard';
 import AssetInventory from './pages/recon/AssetInventory';
 import NewScan from './pages/recon/NewScan';
 import ScanResults from './pages/recon/ScanResults';
+import UserManagement from './pages/recon/UserManagement';
 
 export const router = createBrowserRouter([
   {
@@ -25,6 +26,7 @@ export const router = createBrowserRouter([
           { path: 'inventory', Component: AssetInventory },
           { path: 'new-scan', Component: NewScan },
           { path: 'scan/:id', Component: ScanResults },
+          { path: 'users', Component: UserManagement },
         ],
       },
     ],

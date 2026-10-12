@@ -14,10 +14,11 @@ from extensions import db
 from models import Role, User
 from services.auth_service import hash_password
 from services.rbac_service import seed_rbac_data
+from utils.jwt_utils import issue_tokens
 
 
 class TestRBACPermissions(unittest.TestCase):
-    """Test RBAC permission enforcement across scan endpoints."""
+    """Test RBAC permission enforcement across scan and user management endpoints."""
 
     def setUp(self):
         self.app = create_app(
@@ -36,6 +37,17 @@ class TestRBACPermissions(unittest.TestCase):
         db.create_all()
         seed_rbac_data()
 
+        # Create admin user
+        admin_role = Role.query.filter_by(name="admin").first()
+        self.admin_user = User(
+            username="adminuser",
+            email="admin@example.com",
+            password_hash=hash_password("Password123!@#"),
+            is_active=True,
+        )
+        self.admin_user.roles = [admin_role]
+        db.session.add(self.admin_user)
+
         # Create basic user (permission: scan:passive)
         basic_role = Role.query.filter_by(name="basic").first()
         self.basic_user = User(
@@ -47,15 +59,15 @@ class TestRBACPermissions(unittest.TestCase):
         self.basic_user.roles = [basic_role]
         db.session.add(self.basic_user)
 
-        # Create authorized user (permissions: scan:passive, scan:active)
-        authorized_role = Role.query.filter_by(name="authorized").first()
+        # Create privileged user (permissions: scan:passive, scan:active, scan:full)
+        privileged_role = Role.query.filter_by(name="privileged").first()
         self.auth_user = User(
             username="authuser",
             email="auth@example.com",
             password_hash=hash_password("Password123!@#"),
             is_active=True,
         )
-        self.auth_user.roles = [authorized_role]
+        self.auth_user.roles = [privileged_role]
         db.session.add(self.auth_user)
 
         db.session.commit()
@@ -70,6 +82,13 @@ class TestRBACPermissions(unittest.TestCase):
         with self.client.session_transaction() as sess:
             sess["user_id"] = user_id
             sess["csrf_token"] = "test-csrf-token-12345"
+
+    def _jwt_headers(self, user: User) -> dict[str, str]:
+        tokens = issue_tokens(user_id=user.id, permissions=sorted(user.permission_names))
+        return {
+            "Authorization": f"Bearer {tokens.access_token}",
+            "Content-Type": "application/json",
+        }
 
     def test_unauthenticated_request_rejected(self):
         with self.client.session_transaction() as sess:
@@ -108,8 +127,128 @@ class TestRBACPermissions(unittest.TestCase):
             json={"target": "example.com"},
             headers={"X-CSRF-Token": "test-csrf-token-12345"},
         )
-        # Should be authorized (status 200/201 or accepted, definitely not 401 or 403)
         self.assertNotIn(response.status_code, [401, 403])
+
+    def test_admin_can_create_basic_user(self):
+        headers = self._jwt_headers(self.admin_user)
+        response = self.client.post(
+            "/api/users",
+            headers=headers,
+            json={
+                "username": "newbasic",
+                "email": "newbasic@example.com",
+                "password": "Password123!@#",
+                "role": "basic",
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        self.assertEqual(data["user"]["role"], "basic")
+        self.assertEqual(data["user"]["username"], "newbasic")
+
+    def test_admin_can_create_privileged_user(self):
+        headers = self._jwt_headers(self.admin_user)
+        response = self.client.post(
+            "/api/users",
+            headers=headers,
+            json={
+                "username": "newpriv",
+                "email": "newpriv@example.com",
+                "password": "Password123!@#",
+                "role": "privileged",
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+        data = response.get_json()
+        self.assertEqual(data["user"]["role"], "privileged")
+
+    def test_privileged_user_cannot_create_users(self):
+        headers = self._jwt_headers(self.auth_user)
+        response = self.client.post(
+            "/api/users",
+            headers=headers,
+            json={
+                "username": "unauthorizedcreate",
+                "email": "unauth@example.com",
+                "password": "Password123!@#",
+                "role": "basic",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_basic_user_cannot_create_users(self):
+        headers = self._jwt_headers(self.basic_user)
+        response = self.client.post(
+            "/api/users",
+            headers=headers,
+            json={
+                "username": "unauthorizedcreate2",
+                "email": "unauth2@example.com",
+                "password": "Password123!@#",
+                "role": "basic",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_basic_user_cannot_create_active_scan_via_api(self):
+        headers = self._jwt_headers(self.basic_user)
+        response = self.client.post(
+            "/api/scans",
+            headers=headers,
+            json={
+                "targets": ["example.com"],
+                "scanType": "custom_scan",  # active scan
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+        data = response.get_json()
+        self.assertIn("locked for Basic users", data.get("error", {}).get("message", ""))
+
+    def test_basic_user_cannot_create_full_scan_via_api(self):
+        headers = self._jwt_headers(self.basic_user)
+        response = self.client.post(
+            "/api/scans",
+            headers=headers,
+            json={
+                "targets": ["example.com"],
+                "scanType": "full_scan",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_privileged_user_can_create_active_and_full_scan_via_api(self):
+        headers = self._jwt_headers(self.auth_user)
+        response = self.client.post(
+            "/api/scans",
+            headers=headers,
+            json={
+                "targets": ["example.com"],
+                "scanType": "custom_scan",  # active scan
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+
+        response_full = self.client.post(
+            "/api/scans",
+            headers=headers,
+            json={
+                "targets": ["example.com"],
+                "scanType": "full_scan",  # full scan
+            },
+        )
+        self.assertEqual(response_full.status_code, 201)
+
+    def test_basic_user_can_create_passive_scan_via_api(self):
+        headers = self._jwt_headers(self.basic_user)
+        response = self.client.post(
+            "/api/scans",
+            headers=headers,
+            json={
+                "targets": ["example.com"],
+                "scanType": "quick_scan",  # passive scan
+            },
+        )
+        self.assertEqual(response.status_code, 201)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { Clock, Play, Settings, Target, Zap } from 'lucide-react';
+import { CheckCircle2, Clock, Lock, Play, Settings, ShieldAlert, Sparkles, Target, Zap } from 'lucide-react';
 
 import { getRecentScans } from '../../../api/dashboard';
 import { createScan, validateTargets } from '../../../api/scans';
@@ -107,6 +107,8 @@ export default function NewScan() {
   const [validationSummary, setValidationSummary] = useState<{ valid: number; invalid: number } | null>(null);
 
   const isAdmin = user?.role === 'admin';
+  const isPrivileged = user?.role === 'privileged' || user?.role === 'admin' || user?.role === 'operator';
+  const isBasic = !isPrivileged;
 
   useEffect(() => {
     setSelectedScanners([...scanConfig[scanType]]);
@@ -128,13 +130,10 @@ export default function NewScan() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin) {
-      setScanType('full');
-      return;
+    if (isBasic) {
+      setScanType('passive');
     }
-
-    setScanType((prev) => (prev === 'full' ? 'passive' : prev));
-  }, [isAdmin]);
+  }, [isBasic]);
 
   const scanTypes = useMemo(
     () => [
@@ -304,30 +303,68 @@ export default function NewScan() {
           </div>
 
           <div className="mb-8">
-            <label className="block text-sm font-medium text-gray-900 mb-4">Scan Type</label>
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-sm font-medium text-gray-900">Scan Type</label>
+              <span className="text-xs text-gray-500">
+                Logged in as: <strong className="capitalize text-gray-800">{user?.role || 'User'}</strong>
+              </span>
+            </div>
+
+            {isBasic ? (
+              <div className="mb-4 p-4 bg-amber-50/90 border border-amber-200 rounded-xl flex items-start gap-3 text-sm text-amber-900">
+                <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-amber-900">Basic User Access Mode</p>
+                  <p className="text-amber-800 text-xs mt-0.5">
+                    Your account has the <strong>Basic User</strong> role, which permits <strong>Passive Scanning</strong> only. <strong>Active</strong> and <strong>Full</strong> scans are locked. An Administrator can upgrade your account to a Privileged User to unlock all scan types.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-4 p-3 bg-blue-50/70 border border-blue-100 rounded-xl flex items-center justify-between text-xs text-blue-900">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-blue-600" />
+                  <span>{isAdmin ? 'Administrator' : 'Privileged User'} role active — all scan types are fully unlocked.</span>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {scanTypes.map((type) => {
                 const Icon = type.icon;
-                const disabled = type.id === 'full' && !isAdmin;
+                const isLocked = type.id !== 'passive' && isBasic;
                 return (
                   <button
                     key={type.id}
                     type="button"
-                    onClick={() => setScanType(type.id)}
-                    disabled={disabled}
+                    onClick={() => {
+                      if (!isLocked) setScanType(type.id);
+                    }}
+                    disabled={isLocked}
                     className={`
-                      p-4 rounded-xl border-2 text-left transition-all
-                      ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-                      ${scanType === type.id ? 'border-blue-500 bg-blue-50 shadow-lg shadow-blue-500/20' : 'border-gray-200 bg-white hover:border-gray-300'}
+                      relative p-4 rounded-xl border-2 text-left transition-all
+                      ${isLocked ? 'opacity-60 cursor-not-allowed bg-gray-50/90 border-gray-200' : 'cursor-pointer hover:border-gray-300'}
+                      ${scanType === type.id && !isLocked ? 'border-blue-500 bg-blue-50 shadow-lg shadow-blue-500/20' : 'border-gray-200 bg-white'}
                     `}
                   >
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${scanType === type.id ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'}`}>
-                        <Icon className="w-5 h-5" />
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${scanType === type.id && !isLocked ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                          <Icon className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-gray-900">{type.name}</h4>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-semibold text-gray-900">{type.name}</h4>
-                      </div>
+                      {isLocked ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                          <Lock className="w-3 h-3" /> Locked
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                          <CheckCircle2 className="w-3 h-3" /> Available
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-gray-600 mb-2">{type.description}</p>
                     <p className="text-xs text-gray-500">{type.duration}</p>
@@ -335,8 +372,10 @@ export default function NewScan() {
                 );
               })}
             </div>
-            {!isAdmin ? (
-              <p className="text-xs text-gray-500 mt-2">Full Scan requires admin role.</p>
+            {isBasic ? (
+              <p className="text-xs text-amber-700 mt-2.5 flex items-center gap-1.5 font-medium">
+                <Lock className="w-3.5 h-3.5" /> Active and Full scans are locked for Basic users.
+              </p>
             ) : null}
           </div>
 

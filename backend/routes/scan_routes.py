@@ -24,7 +24,7 @@ public_bp = Blueprint("scan_public", __name__)
 MODE_PERMISSIONS = {
     "passive": "scan:passive",
     "active": "scan:active",
-    "full": "scan:active",
+    "full": "scan:full",
 }
 
 
@@ -40,10 +40,16 @@ def _authorize_mode(mode: str):
     required_permission = MODE_PERMISSIONS[mode]
 
     if not user.has_permission(required_permission):
-        return jsonify({"error": "Forbidden", "required_permission": required_permission}), 403
-
-    if mode == "full" and not user.has_role("admin"):
-        return jsonify({"error": "Forbidden", "required_role": "admin"}), 403
+        return (
+            jsonify(
+                {
+                    "error": "Forbidden",
+                    "message": f"{mode.capitalize()} scans are locked for your account role. Upgrade to Privileged user or Administrator.",
+                    "required_permission": required_permission,
+                }
+            ),
+            403,
+        )
 
     return None
 

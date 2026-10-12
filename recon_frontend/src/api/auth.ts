@@ -1,11 +1,15 @@
 import { AUTH_STORAGE_KEYS } from '../config/api';
 import { apiRequest, clearTokens, setTokens } from './client';
 
+export type ApiUserRole = 'admin' | 'privileged' | 'basic' | 'operator' | 'viewer';
+
 export type ApiUser = {
   id: string;
   email: string;
   name: string;
-  role: 'admin' | 'viewer' | 'operator';
+  username?: string;
+  role: ApiUserRole;
+  roles?: string[];
   avatar?: string;
   organizationId?: string;
 };

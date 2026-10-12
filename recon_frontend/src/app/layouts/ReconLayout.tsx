@@ -1,5 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router';
-import { Activity, LayoutDashboard, LogOut, Package, Shield } from 'lucide-react';
+import { Activity, LayoutDashboard, LogOut, Package, Shield, Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '../context/AuthContext';
@@ -39,10 +39,13 @@ export default function ReconLayout() {
     return { dot: 'bg-green-500', label: 'All Systems Operational' };
   }, [health]);
 
+  const isAdmin = user?.role === 'admin';
+
   const navItems = [
     { path: '/', label: 'Dashboard', icon: LayoutDashboard },
     { path: '/inventory', label: 'Asset Inventory', icon: Package },
     { path: '/new-scan', label: 'New Scan', icon: Activity },
+    ...(isAdmin ? [{ path: '/users', label: 'User Management', icon: Users }] : []),
   ];
 
   const isActive = (path: string) => {
@@ -62,9 +65,22 @@ export default function ReconLayout() {
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
               <Shield className="w-6 h-6 text-white" />
             </div>
-            <div>
-              <h1 className="text-lg font-semibold text-gray-900">SF Recon Engine</h1>
-              <p className="text-xs text-gray-500">{user?.name || user?.email || 'Security Platform'}</p>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold text-gray-900 leading-tight">SF Recon Engine</h1>
+              <div className="flex items-center gap-1.5 mt-1">
+                <span className="text-xs text-gray-500 truncate max-w-[90px]">{user?.name || user?.email || 'User'}</span>
+                <span
+                  className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md ${
+                    user?.role === 'admin'
+                      ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                      : user?.role === 'privileged' || user?.role === 'operator'
+                      ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                      : 'bg-amber-100 text-amber-700 border border-amber-200'
+                  }`}
+                >
+                  {user?.role || 'basic'}
+                </span>
+              </div>
             </div>
           </div>
         </div>

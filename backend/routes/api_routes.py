@@ -23,8 +23,9 @@ from flask import Blueprint, current_app, g, jsonify, request
 from sqlalchemy import desc, text
 
 from extensions import db
-from models import AuditLog, Finding, Scan, User
-from services.auth_service import authenticate_user
+from models import AuditLog, Finding, Role, Scan, User
+from services.audit_service import log_action
+from services.auth_service import authenticate_user, hash_password, validate_username
 from services.scan_service import generate_findings, run_active_scan, run_full_scan, run_passive_scan, validate_target
 from utils.api_response import api_error, to_iso_utc, utc_now_iso
 from utils.jwt_utils import JwtError, access_expiry_iso, decode_token, issue_tokens
@@ -33,6 +34,7 @@ from utils.jwt_utils import JwtError, access_expiry_iso, decode_token, issue_tok
 bp = Blueprint("api", __name__, url_prefix="/api")
 
 _WILDCARD_DOMAIN_RE = re.compile(r"^\*\.(?!-)(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$")
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _scan_executor(app: Any | None = None) -> ThreadPoolExecutor:
@@ -335,9 +337,9 @@ def _scan_summary_text(*, scan: Scan, status: str, results: dict[str, Any]) -> s
 def _user_role(user: User) -> str:
     if user.has_role("admin"):
         return "admin"
-    if user.has_permission("scan:active"):
-        return "operator"
-    return "viewer"
+    if user.has_role("privileged") or user.has_role("authorized") or user.has_permission("scan:full") or user.has_permission("scan:active"):
+        return "privileged"
+    return "basic"
 
 
 def _api_user_payload(user: User) -> dict[str, Any]:
@@ -345,7 +347,9 @@ def _api_user_payload(user: User) -> dict[str, Any]:
         "id": str(user.id),
         "email": user.email,
         "name": user.username,
+        "username": user.username,
         "role": _user_role(user),
+        "roles": [r.name for r in user.roles],
         "avatar": "",
         "organizationId": "default",
     }
@@ -900,6 +904,19 @@ def scans_create():
     scan_type = (payload.get("scanType") or "quick_scan").strip()
     scan_type_map = {"full_scan": "full", "quick_scan": "passive", "custom_scan": "active"}
     mode = scan_type_map.get(scan_type, "passive")
+
+    if mode == "active" and not (user.has_permission("scan:active") or user.has_role("privileged") or user.has_role("authorized") or user.has_role("admin")):
+        return api_error(
+            status=403,
+            code="FORBIDDEN",
+            message="Active scans are locked for Basic users. Only Privileged users and Administrators can initiate active scans.",
+        )
+    if mode == "full" and not (user.has_permission("scan:full") or user.has_role("privileged") or user.has_role("authorized") or user.has_role("admin")):
+        return api_error(
+            status=403,
+            code="FORBIDDEN",
+            message="Full scans are locked for Basic users. Only Privileged users and Administrators can initiate full scans.",
+        )
 
     schedule = payload.get("schedule") or {"type": "immediate", "scheduledAt": None}
     schedule_type = (schedule.get("type") or "immediate").strip()
@@ -1807,6 +1824,164 @@ def notifications_mark_read(notification_id: str):
     if not isinstance(auth, tuple):
         return auth
     return jsonify({"id": notification_id, "read": True, "timestamp": utc_now_iso()})
+
+
+@bp.get("/users")
+def api_users_list():
+    auth = _require_api_auth()
+    if not isinstance(auth, tuple):
+        return auth
+    user, _ = auth
+
+    if not (user.has_role("admin") or user.has_permission("user:read")):
+        return api_error(status=403, code="FORBIDDEN", message="Only administrators have access to view users.")
+
+    users = User.query.order_by(User.created_at.desc()).all()
+    return jsonify(
+        {
+            "users": [
+                {
+                    "id": str(u.id),
+                    "username": u.username,
+                    "email": u.email,
+                    "role": _user_role(u),
+                    "roles": [r.name for r in u.roles],
+                    "permissions": sorted(u.permission_names),
+                    "isActive": bool(u.is_active),
+                    "createdAt": to_iso_utc(u.created_at),
+                }
+                for u in users
+            ]
+        }
+    )
+
+
+@bp.post("/users")
+def api_users_create():
+    auth = _require_api_auth()
+    if not isinstance(auth, tuple):
+        return auth
+    current_admin, _ = auth
+
+    if not (current_admin.has_role("admin") or current_admin.has_permission("user:create")):
+        return api_error(status=403, code="FORBIDDEN", message="Only administrators have the ability to create users.")
+
+    payload = request.get_json(silent=True) or {}
+    raw_username = str(payload.get("username") or "").strip()
+    raw_email = str(payload.get("email") or "").strip().lower()
+    password = str(payload.get("password") or "")
+    role_choice = str(payload.get("role") or "basic").strip().lower()
+
+    details = []
+    if not raw_username:
+        details.append({"field": "username", "message": "Username is required"})
+    if not raw_email:
+        details.append({"field": "email", "message": "Email is required"})
+    if not password:
+        details.append({"field": "password", "message": "Password is required"})
+    elif len(password) < 8:
+        details.append({"field": "password", "message": "Password must be at least 8 characters"})
+
+    if details:
+        return api_error(status=422, code="VALIDATION_ERROR", message="Validation failed", details=details)
+
+    try:
+        username = validate_username(raw_username)
+    except ValueError as exc:
+        return api_error(status=422, code="VALIDATION_ERROR", message=str(exc), details=[{"field": "username", "message": str(exc)}])
+
+    if not _EMAIL_RE.match(raw_email):
+        return api_error(status=422, code="VALIDATION_ERROR", message="Invalid email format", details=[{"field": "email", "message": "Invalid email address"}])
+
+    existing = User.query.filter((User.username == username) | (User.email == raw_email)).first()
+    if existing is not None:
+        return api_error(status=409, code="CONFLICT", message="A user with this username or email already exists")
+
+    target_role_name = "basic"
+    if role_choice in {"admin", "administrator"}:
+        target_role_name = "admin"
+    elif role_choice in {"privileged", "privalaged", "authorized", "operator"}:
+        target_role_name = "privileged"
+    else:
+        target_role_name = "basic"
+
+    role_obj = Role.query.filter_by(name=target_role_name).first()
+    if role_obj is None and target_role_name == "privileged":
+        role_obj = Role.query.filter_by(name="authorized").first()
+    if role_obj is None:
+        return api_error(status=500, code="SERVER_ERROR", message=f"Configured role '{target_role_name}' was not found in database. Ensure RBAC is seeded.")
+
+    new_user = User(
+        username=username,
+        email=raw_email,
+        password_hash=hash_password(password),
+        is_active=True,
+    )
+    new_user.roles = [role_obj]
+    db.session.add(new_user)
+    db.session.commit()
+
+    log_action(
+        action="admin.user.created",
+        resource="users",
+        user_id=current_admin.id,
+        details={"created_user_id": new_user.id, "username": new_user.username, "role": target_role_name},
+    )
+
+    return (
+        jsonify(
+            {
+                "message": "User created successfully",
+                "user": {
+                    "id": str(new_user.id),
+                    "username": new_user.username,
+                    "email": new_user.email,
+                    "role": _user_role(new_user),
+                    "roles": [r.name for r in new_user.roles],
+                    "permissions": sorted(new_user.permission_names),
+                    "isActive": bool(new_user.is_active),
+                    "createdAt": to_iso_utc(new_user.created_at),
+                },
+            }
+        ),
+        201,
+    )
+
+
+@bp.delete("/users/<user_id>")
+def api_users_delete(user_id: str):
+    auth = _require_api_auth()
+    if not isinstance(auth, tuple):
+        return auth
+    current_admin, _ = auth
+
+    if not (current_admin.has_role("admin") or current_admin.has_permission("user:delete")):
+        return api_error(status=403, code="FORBIDDEN", message="Only administrators have the ability to delete users.")
+
+    try:
+        user_int = int(user_id)
+    except ValueError:
+        return api_error(status=404, code="NOT_FOUND", message="User not found")
+
+    if user_int == current_admin.id:
+        return api_error(status=400, code="BAD_REQUEST", message="Administrators cannot delete their own account")
+
+    target_user = db.session.get(User, user_int)
+    if target_user is None:
+        return api_error(status=404, code="NOT_FOUND", message="User not found")
+
+    username = target_user.username
+    db.session.delete(target_user)
+    db.session.commit()
+
+    log_action(
+        action="admin.user.deleted",
+        resource="users",
+        user_id=current_admin.id,
+        details={"deleted_user_id": user_int, "username": username},
+    )
+
+    return jsonify({"message": f"User {username} deleted successfully"})
 
 
 def _check_and_run_due_scheduled_scans(app: Any) -> None:
